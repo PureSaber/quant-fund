@@ -29,7 +29,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Linux使用`python3.12 -m venv .venv`创建环境，并将以上`.\\.venv\\Scripts\\python.exe`替换为`.venv/bin/python`。
+Linux使用`python3.12 -m venv .venv`创建环境，并将以上`.\.venv\Scripts\python.exe`替换为`.venv/bin/python`。
 
 已有非空样本目录不会被覆盖。`requirements.lock`记录完整依赖版本；CI分别验证Ubuntu和Windows的Python3.12。其他Python版本尚未列入支持矩阵。真实数据、数据库、虚拟环境和运行报告不提交到仓库，合成样本用`demo`命令生成。
 
