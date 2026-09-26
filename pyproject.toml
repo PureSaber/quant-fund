@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-fund"
+version = "0.1.0"
+description = "Point-in-time fund research, OTC fund simulation, and portfolio monitoring"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy>=2.0,<2.3", "pandas>=2.2,<3", "scipy>=1.15,<2",
+  "scikit-learn>=1.6,<2", "skfolio>=0.20,<2",
+  "optimalportfolios>=7.8,<8", "qis>=5.26,<6",
+  "streamlit>=1.50,<2", "plotly>=6,<7", "openpyxl>=3.1,<4",
+]
+
+[project.optional-dependencies]
+public-data = ["akshare>=1.17,<2"]
+dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
+
+[project.scripts]
+quant-fund = "quant_fund.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
