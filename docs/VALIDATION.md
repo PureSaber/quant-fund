@@ -24,4 +24,6 @@
 
 测试时发现运行中的Streamlit进程保留了更新前的模块，冷启动后已恢复并完成上述页面验证。NumPy2.5.3与当前pandas组合产生弃用告警，依赖现已限制并锁定到实际通过验证的NumPy2.2.6。
 
-尚未验证：真实公募接口响应、真实私募合同和净值数据、跨平台安装、云部署、真实账户监控与下单。GitHub Actions配置已添加，但本项目尚未推送远端，因此未执行远端CI。
+以上为首版本地验收记录，当时尚未执行远端CI。公开仓库的后续Ubuntu/Windows检查以[GitHub Actions](https://github.com/PureSaber/quant-fund/actions/workflows/tests.yml)对应提交的实际结果为准。
+
+尚未验证：真实公募接口响应、真实私募合同和净值数据、云部署、真实账户监控与下单。

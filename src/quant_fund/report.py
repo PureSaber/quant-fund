@@ -51,7 +51,7 @@ def export_run(result, dataset, source_directory, output):
         ignore=shutil.ignore_patterns("__pycache__"),
     )
     project = Path(__file__).resolve().parents[2]
-    for name in ("pyproject.toml", "requirements.lock", "app.py", "README.md"):
+    for name in ("pyproject.toml", "requirements.lock", "app.py", "README.md", "LICENSE"):
         if (project / name).exists():
             shutil.copyfile(project / name, root / "code" / name)
     manifest = {

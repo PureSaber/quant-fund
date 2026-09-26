@@ -1,10 +1,15 @@
 # 基金研究工作台
 
-独立Python项目，面向中国公募FOF与私募证券基金FOF。首版提供基金研究、场外基金申赎回测、组合监控三条完整流程，并通过只读JSON快照预留puresaber等平台的接入位置。当前验收使用7只合成基金，未验证真实产品的投资效果。
+[![CI](https://github.com/PureSaber/quant-fund/actions/workflows/tests.yml/badge.svg)](https://github.com/PureSaber/quant-fund/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+独立Python项目，提供通用基金量化研究与组合配置，以中国公募和私募证券基金FOF为首阶段重点。首版提供单只基金研究、场外基金申赎回测、组合监控三条完整流程，并通过只读JSON快照预留puresaber等平台的接入位置。当前验收使用7只合成基金，未验证真实产品的投资效果。
+
+公开仓库：[PureSaber/quant-fund](https://github.com/PureSaber/quant-fund)。本项目属于PureSaber的quant系列，开发采用`codex/*`功能分支、PR和CI门禁，见[贡献流程](CONTRIBUTING.md)与[仓库治理](.github/GOVERNANCE.md)。
 
 ## 运行
 
-本机已经安装独立虚拟环境。在本目录运行：
+已经安装独立虚拟环境并生成样本时，在本目录运行：
 
 ```powershell
 .\.venv\Scripts\python.exe -m streamlit run app.py
@@ -12,9 +17,11 @@
 
 打开<http://127.0.0.1:8517>。默认数据目录为`data/demo`，合成研究时点为2026-08-31。若端口上的服务已经运行，直接打开页面即可。服务只监听本机。
 
-在新环境安装并生成样本（建议使用已验证的Python3.12）：
+在Windows新环境安装并生成样本（Python3.12）：
 
 ```powershell
+git clone https://github.com/PureSaber/quant-fund.git
+cd quant-fund
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.lock
 .\.venv\Scripts\python.exe -m pip install --no-deps -e .
@@ -22,7 +29,9 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-已有非空样本目录不会被覆盖。`requirements.lock`记录本次Windows环境的完整安装版本；其他操作系统应重新验证依赖，而不是假设完全兼容。
+Linux使用`python3.12 -m venv .venv`创建环境，并将以上`.\.venv\Scripts\python.exe`替换为`.venv/bin/python`。
+
+已有非空样本目录不会被覆盖。`requirements.lock`记录完整依赖版本；CI分别验证Ubuntu和Windows的Python3.12。其他Python版本尚未列入支持矩阵。真实数据、数据库、虚拟环境和运行报告不提交到仓库，合成样本用`demo`命令生成。
 
 ## 三部分功能
 
