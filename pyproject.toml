@@ -1,11 +1,14 @@
 [build-system]
-requires = ["setuptools>=75"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "quant-fund"
 version = "0.1.0"
 description = "Point-in-time fund research, OTC fund simulation, and portfolio monitoring"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
   "numpy>=2.0,<2.3", "pandas>=2.2,<3", "scipy>=1.15,<2",
@@ -20,6 +23,10 @@ dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
 
 [project.scripts]
 quant-fund = "quant_fund.cli:main"
+
+[project.urls]
+Repository = "https://github.com/PureSaber/quant-fund"
+Issues = "https://github.com/PureSaber/quant-fund/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
