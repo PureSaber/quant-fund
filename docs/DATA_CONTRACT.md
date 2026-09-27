@@ -1,6 +1,6 @@
 # 数据契约v1
 
-一个研究数据集包含以下五个文件，输入指纹覆盖其文件名和原始字节。所有日期使用无时区的`YYYY-MM-DD`，模型粒度为日，决策发生在收盘后。产品在真实市场的日内截止时间尚未建模。
+原有研究数据集包含以下五个文件，输入指纹覆盖其文件名和原始字节；新增 `calendars.json` / `holdings.csv` 也纳入指纹。净值/申赎日期使用无时区的`YYYY-MM-DD`，模型粒度为日，决策发生在收盘后。新日历和披露契约的 available_at 必须带时区。产品在真实市场的日内截止时间尚未建模。
 
 |文件|内容|
 |---|---|
@@ -34,8 +34,8 @@
 |currency|计价币种|CNY|
 |end_date|终止日，含当日不再纳入新配置|可空；无自动清算|
 |share_group|同一基金不同份额分组|同组只选一个合格代码，按代码排序|
-|confirm_lag|申请净值日后确认滞后|交易日，默认1|
-|settle_lag|赎回到账滞后|交易日，默认3，不小于confirm_lag|
+|confirm_lag|申请净值日后确认滞后|confirmation 用途开日，默认1；仅 synthetic 旧模式沿用单日历|
+|settle_lag|赎回到账滞后|banking 用途开日，默认3；同时检查实际到账日不早于确认日|
 |notice_days|最少预约期|自然日；不允许收盘决策当日成交|
 |lock_days|每批份额锁定期|自然日，从申购申请净值日开始|
 |buy_fee|外扣式申购费率|`净申购金额=总金额/(1+费率)`|
@@ -66,3 +66,7 @@
 ```
 
 `classification`只允许`synthetic/user_provided/public_source`。可选`default_as_of/default_start`设置页面默认日期。不得把合成数据标为真实来源。样本生成器的Excel与CSV均显式标记合成来源。
+
+## 分用途日历与披露持仓扩展
+
+真实分类必须提供 calendars.json（PurposeCalendar 数组）及 calendar_ids（dealing/confirmation/banking 到 id 的映射）；缺少覆盖失败，不回退工作日。可选 holdings.csv 使用 QDK financial.holdings.COLUMNS，披露权重按 available_at 过滤；未知部分保留 UNKNOWN。平台快照新增 lookthrough 字段。完整字段和调用边界见 [FINANCIAL_FOUNDATIONS.md](FINANCIAL_FOUNDATIONS.md)。

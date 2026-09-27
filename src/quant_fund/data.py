@@ -127,6 +127,24 @@ class Dataset:
     distributions: pd.DataFrame
     metadata: dict
     fingerprint: str
+    purpose_calendars: object | None = None
+    disclosures: pd.DataFrame | None = None
+
+    @property
+    def account_calendar(self):
+        if self.purpose_calendars is None:
+            return self.calendar
+        all_days = set(self.calendar)
+        for calendar in self.purpose_calendars.calendars:
+            all_days.update(pd.DatetimeIndex(calendar.open_days))
+        return pd.DatetimeIndex(sorted(all_days))
+
+    def purpose_calendar(self, purpose, on, known_on):
+        if self.purpose_calendars is None:
+            raise ValueError("缺少分用途日历，不能把交易日当作资金到账日")
+        at = day(known_on).tz_localize("Asia/Shanghai") + pd.Timedelta(hours=23, minutes=59)
+        calendar_id = self.metadata["calendar_ids"][purpose]
+        return self.purpose_calendars.asof(calendar_id, purpose, at, on), at
 
     @classmethod
     def load(cls, directory: str | Path) -> Dataset:
@@ -171,7 +189,27 @@ class Dataset:
             raise ValueError("必须标明数据分类")
         if not metadata.get("calendar_source") or not metadata.get("known_at_policy"):
             raise ValueError("必须说明交易日历来源和历史获知日期的来源")
-        return cls(funds, nav, calendar, distributions, metadata, digest.hexdigest())
+        purposes, disclosures = None, None
+        if (root / "calendars.json").exists():
+            from quant_data_kit.financial.calendars import CalendarBook, PurposeCalendar
+
+            digest.update((root / "calendars.json").read_bytes())
+            records = json.loads((root / "calendars.json").read_text(encoding="utf-8"))
+            purposes = CalendarBook([PurposeCalendar(**item) for item in records])
+            if not {"dealing", "confirmation", "banking"}.issubset(
+                metadata.get("calendar_ids", {})
+            ):
+                raise ValueError("需显式指定申赎、确认和资金日历ID")
+        elif metadata["classification"] != "synthetic":
+            raise ValueError("真实基金账本需提供calendars.json分用途日历；不使用周末代理")
+        if (root / "holdings.csv").exists():
+            from quant_data_kit.financial.holdings import validate_holdings
+
+            digest.update((root / "holdings.csv").read_bytes())
+            disclosures = validate_holdings(pd.read_csv(root / "holdings.csv", dtype=str))
+        return cls(
+            funds, nav, calendar, distributions, metadata, digest.hexdigest(), purposes, disclosures
+        )
 
     def as_of(self, date) -> pd.DataFrame:
         date = day(date)
