@@ -2,6 +2,8 @@
 
 import json
 
+import pandas as pd
+
 
 def records(frame):
     # pandas serializes timestamps and missing values without non-standard NaN tokens.
@@ -16,7 +18,7 @@ def platform_snapshot(result, dataset, monitoring=None):
     ledger = result["ledger"]
     account = ledger.snapshot()
     account.pop("date")
-    return {
+    snapshot = {
         "schema": "quant-fund.portfolio-snapshot@1",
         "mode": "research_only",
         "as_of": ledger.current_date.strftime("%Y-%m-%d"),
@@ -35,3 +37,14 @@ def platform_snapshot(result, dataset, monitoring=None):
         "liquidity": records(monitoring["liquidity"]),
         "rebalance_review": records(monitoring["rebalance_review"]),
     }
+    if dataset.disclosures is not None:
+        from quant_data_kit.financial.holdings import exposure_summary, look_through
+
+        held = ledger.holdings()
+        total = ledger.snapshot()["total_value"]
+        weights = {row.fund_id: str(row.value / total) for row in held.itertuples()}
+        at = ledger.current_date.tz_localize("Asia/Shanghai") + pd.Timedelta(hours=23, minutes=59)
+        leaves = look_through(dataset.disclosures, weights, at)
+        snapshot["lookthrough"] = json.loads(json.dumps(exposure_summary(leaves), default=str))
+        snapshot["lookthrough"]["leaves"] = records(leaves)
+    return snapshot

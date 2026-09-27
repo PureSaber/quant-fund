@@ -54,8 +54,11 @@ class Ledger:
         self.current_date = None
         self.dividends_processed = set()
 
-    def offset(self, date, lag):
-        calendar = self.dataset.calendar
+    def offset(self, date, lag, purpose=None):
+        if purpose is not None and self.dataset.purpose_calendars is not None:
+            calendar, at = self.dataset.purpose_calendar(purpose, date, self.current_date or date)
+            return calendar.advance(date, lag, at=at, purpose=purpose)
+        calendar = self.dataset.account_calendar
         index = calendar.searchsorted(day(date)) + lag
         return calendar[index] if index < len(calendar) else None
 
@@ -66,6 +69,9 @@ class Ledger:
             day(submitted) + pd.Timedelta(days=fund.notice_days),
         )
         candidates = self.dataset.calendar[self.dataset.calendar >= earliest]
+        if self.dataset.purpose_calendars is not None:
+            calendar, at = self.dataset.purpose_calendar("dealing", earliest, submitted)
+            candidates = candidates.intersection(pd.DatetimeIndex(calendar.open_days))
         if fund.open_dates:
             candidates = candidates.intersection(pd.DatetimeIndex(fund.open_dates))
         if fund.end_date:
@@ -88,6 +94,11 @@ class Ledger:
         quote = self.dataset.quote(code, self.current_date)
         if quote is None or (self.current_date - quote.nav_date).days > fund.max_stale_days:
             raise ValueError("最新已知净值缺失或过期")
+        # Resolve calendars before reserving money/shares; any failure is mutation-free.
+        confirmation = self.offset(deal, fund.confirm_lag, "confirmation")
+        settlement = self.offset(deal, fund.settle_lag, "banking")
+        if settlement is not None and confirmation is not None and settlement < confirmation:
+            raise ValueError("资金到账日不能早于份额确认日")
         reserved = []
         if side == "BUY":
             if amount <= 0 or amount < fund.min_buy or amount > self.cash + 1e-8 or shares != 0:
@@ -115,8 +126,8 @@ class Ledger:
             side,
             self.current_date,
             deal,
-            self.offset(deal, fund.confirm_lag),
-            self.offset(deal, fund.settle_lag),
+            confirmation,
+            settlement,
             amount,
             shares,
             lots=reserved,
@@ -128,7 +139,11 @@ class Ledger:
     def _settle(self, date):
         unpaid = []
         for item in self.receivables:
-            if item["due"] is not None and item["due"] <= date:
+            bank_open = True
+            if self.dataset.purpose_calendars is not None:
+                calendar, at = self.dataset.purpose_calendar("banking", date, date)
+                bank_open = calendar.is_open(date, at=at, purpose="banking")
+            if item["due"] is not None and item["due"] <= date and bank_open:
                 self.cash += item["amount"]
             else:
                 unpaid.append(item)
@@ -136,7 +151,7 @@ class Ledger:
 
     def advance(self, date):
         date = day(date)
-        if date not in self.dataset.calendar:
+        if date not in self.dataset.account_calendar:
             raise ValueError("日期不在显式交易日历中")
         if self.current_date is not None:
             expected = self.offset(self.current_date, 1)
@@ -147,6 +162,10 @@ class Ledger:
         for order in self.orders:
             if order.status != "pending" or order.confirm_date is None or date < order.confirm_date:
                 continue
+            if self.dataset.purpose_calendars is not None:
+                calendar, at = self.dataset.purpose_calendar("confirmation", date, date)
+                if not calendar.is_open(date, at=at, purpose="confirmation"):
+                    continue
             quote = self.dataset.quote(order.fund_id, date, exact_date=order.deal_date)
             if quote is None:
                 continue  # Exact dealing NAV is required; never execute at a stale carried price.
@@ -335,14 +354,16 @@ class BacktestConfig:
 
 def run_backtest(dataset: Dataset, config: BacktestConfig):
     ledger = Ledger(dataset, config.initial_cash)
-    dates = dataset.calendar[
-        (dataset.calendar >= day(config.start)) & (dataset.calendar <= day(config.end))
+    dates = dataset.account_calendar[
+        (dataset.account_calendar >= day(config.start))
+        & (dataset.account_calendar <= day(config.end))
     ]
     if len(dates) < 2:
         raise ValueError("回测区间至少需要两个交易日")
     # First session of each month: selection uses information known at that close.
-    month = dates.to_period("M")
-    decision_dates = set(dates[~month.duplicated()])
+    dealing_days = dates.intersection(dataset.calendar)
+    month = dealing_days.to_period("M")
+    decision_dates = set(dealing_days[~month.duplicated()])
     decisions, targets, events = [], [], []
     for date in dates:
         ledger.advance(date)
