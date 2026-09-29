@@ -38,3 +38,7 @@ payload = platform_snapshot(result, data)
 `rebalance_review`沿用最近一次成功决策的目标，`target_date`可能早于`as_of`。增配差额未联合分配可用现金，不含预计成交费，因此不能直接映射为交易指令。真实账户接入需要独立的持仓与份额批次输入、条款版本、交易确认及对账流程。
 
 对接验收：平台收到的资产分项之和应等于total_value；`mode`不能被忽略；每条目标保留时点；不能把预计流动性金额展示为已可用现金。接入后再考虑封装REST API和调度，不在首版引入第二个运行服务。
+
+## Exploratory standard/v2 export
+
+A clean Git checkout additionally publishes a `standard/v2` research profile through the pinned quant-lab adapter. It is always `investable=false` and `rankable=false`. A dirty or unavailable checkout retains the original report without claiming a clean code revision. Dataset identities use content hashes, and date-only NAV observations are stamped at the end of their UTC day. This profile does not certify a historical universe or replace the original accounting evidence.

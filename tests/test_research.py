@@ -44,7 +44,10 @@ def test_regression_recovers_known_exposures():
     assert stats["r_squared"] == pytest.approx(1)
 
 
-def test_end_to_end_report_reconciles_and_detects_tampering(demo_directory, tmp_path):
+def test_end_to_end_report_reconciles_and_detects_tampering(demo_directory, tmp_path, monkeypatch):
+    from quant_lab.contracts_v2 import load_and_validate_run_v2
+
+    monkeypatch.setattr("quant_fund.report.clean_git_commit", lambda root: "a" * 40)
     data = Dataset.load(demo_directory)
     result = run_backtest(
         data, BacktestConfig(start="2024-01-02", end="2024-05-31", strategy="equal")
@@ -63,6 +66,11 @@ def test_end_to_end_report_reconciles_and_detects_tampering(demo_directory, tmp_
     monitor(result, data)
     pd.testing.assert_frame_equal(before, result["ledger"].orders_frame())
     root = export_run(result, data, demo_directory, tmp_path / "report")
+    published = load_and_validate_run_v2(root)
+    assert published.tags["rankable"] == "false"
+    assert published.dataset_snapshots["dataset"] == data.fingerprint
+    exported_nav = pd.read_parquet(root / "standard/v2/returns.parquet")
+    assert exported_nav.nav_units.iloc[0] / 10000 == pytest.approx(nav.total_value.iloc[0])
     assert verify_run(root)["max_reconciliation_error"] < 1e-6
     snapshot = json.loads((root / "platform-snapshot.json").read_text(encoding="utf-8"))
     assert snapshot["schema"] == "quant-fund.portfolio-snapshot@1"
