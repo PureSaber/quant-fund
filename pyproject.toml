@@ -11,6 +11,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
+  "quant-lab @ git+https://github.com/PureSaber/quant-lab.git@8b87aa176d1b0eaacbe918593b83bbec6d1baa33",
   "quant-data-kit @ git+https://github.com/PureSaber/quant-data-kit.git@271a65ee383158b3dd7570e19a3f2b4123f09f79",
   "numpy>=2.0,<2.3", "pandas>=2.2,<3", "scipy>=1.15,<2",
   "scikit-learn>=1.6,<2", "skfolio>=0.20,<2",

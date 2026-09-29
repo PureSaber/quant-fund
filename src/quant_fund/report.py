@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
+from quant_lab.research_v2 import clean_git_commit, write_exploratory_run_v2
 
 from .integration import platform_snapshot
 from .monitor import monitor
@@ -96,6 +97,22 @@ def export_run(result, dataset, source_directory, output):
     <h2>复现信息</h2>
     <pre>{html.escape(json.dumps(manifest, ensure_ascii=False, indent=2))}</pre></html>"""
     (root / "report.html").write_text(document, encoding="utf-8")
+    commit = clean_git_commit(Path(__file__).resolve().parents[2])
+    if commit is not None:
+        levels = result["nav"][["total_value"]].rename_axis("date").reset_index()
+        levels = levels.rename(columns={"total_value": "nav"})
+        write_exploratory_run_v2(
+            root,
+            project="quant-fund",
+            run_id=root.name,
+            strategy_id=str(result["config"]["strategy"]),
+            currency="CNY",
+            code_version=commit,
+            dataset_snapshots={"dataset": dataset.fingerprint},
+            nav=levels[["date", "nav"]],
+            comparability="not_historical_universe",
+            config={"currency": "CNY", "calendar": "synthetic_or_supplied"},
+        )
     manifest["files"] = {
         str(p.relative_to(root)).replace("\\", "/"): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted(root.rglob("*"))
