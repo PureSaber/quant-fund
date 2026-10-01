@@ -62,12 +62,14 @@ class Ledger:
         index = calendar.searchsorted(day(date)) + lag
         return calendar[index] if index < len(calendar) else None
 
-    def dealing_date(self, code, submitted):
+    def dealing_date(self, code, submitted, *, not_before=None):
         fund = self.dataset.funds[code]
         earliest = max(
             day(submitted) + pd.Timedelta(days=1),
             day(submitted) + pd.Timedelta(days=fund.notice_days),
         )
+        if not_before is not None:
+            earliest = max(earliest, day(not_before))
         candidates = self.dataset.calendar[self.dataset.calendar >= earliest]
         if self.dataset.purpose_calendars is not None:
             calendar, at = self.dataset.purpose_calendar("dealing", earliest, submitted)

@@ -110,17 +110,12 @@ def monitor(result, dataset):
         if available <= 1e-10:
             continue
         fund = dataset.funds[lot.fund_id]
-        eligible = max(
-            date + pd.Timedelta(days=max(1, fund.notice_days)),
-            lot.bought + pd.Timedelta(days=fund.lock_days),
+        deal = ledger.dealing_date(
+            lot.fund_id,
+            date,
+            not_before=lot.bought + pd.Timedelta(days=fund.lock_days),
         )
-        candidates = dataset.calendar[dataset.calendar >= eligible]
-        if fund.open_dates:
-            candidates = candidates.intersection(pd.DatetimeIndex(fund.open_dates))
-        if fund.end_date:
-            candidates = candidates[candidates < pd.Timestamp(fund.end_date)]
-        deal = candidates[0] if len(candidates) else None
-        due = ledger.offset(deal, fund.settle_lag) if deal is not None else None
+        due = ledger.offset(deal, fund.settle_lag, "banking") if deal is not None else None
         mark = holdings.set_index("fund_id").loc[lot.fund_id, "mark"]
         liquidity.append(
             {
