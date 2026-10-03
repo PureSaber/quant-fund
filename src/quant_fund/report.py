@@ -111,7 +111,48 @@ def export_run(result, dataset, source_directory, output):
             dataset_snapshots={"dataset": dataset.fingerprint},
             nav=levels[["date", "nav"]],
             comparability="not_historical_universe",
-            config={"currency": "CNY", "calendar": "synthetic_or_supplied"},
+            metrics={
+                **metrics,
+                "evidence_kind": dataset.metadata["classification"],
+                "measurement_basis": {
+                    "period_start": str(nav.index[0].date()),
+                    "period_end": str(nav.index[-1].date()),
+                    "currency": "CNY",
+                    "monthly_annualization_periods": 12,
+                    "sharpe_risk_free_rate": 0,
+                    "valuation": manifest["valuation"],
+                    "monthly_sample": "相邻完整月末已知估值的收益；不含首个非完整月区间",
+                    "first_return_month_end": str(monthly.index[0].date())
+                    if len(monthly)
+                    else None,
+                    "last_return_month_end": str(monthly.index[-1].date())
+                    if len(monthly)
+                    else None,
+                    "benchmark": None,
+                },
+                "backtest_stats": [
+                    {
+                        "portfolio": "完整估值区间（已知估值）",
+                        "total_return": metrics["full_period_return"],
+                        "ann_return": None,
+                        "sharpe": None,
+                        "max_drawdown": metrics["full_period_max_drawdown"],
+                    },
+                    {
+                        "portfolio": "完整月末收益样本（年化12期）",
+                        "total_return": metrics["total_return"],
+                        "ann_return": metrics["annual_return"],
+                        "sharpe": metrics["sharpe"],
+                        "max_drawdown": metrics["max_drawdown"],
+                        "observations": metrics["observations"],
+                    },
+                ],
+            },
+            config={
+                "currency": "CNY",
+                "calendar": "synthetic_or_supplied",
+                "study_config": result["config"],
+            },
         )
     manifest["files"] = {
         str(p.relative_to(root)).replace("\\", "/"): hashlib.sha256(p.read_bytes()).hexdigest()

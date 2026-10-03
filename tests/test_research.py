@@ -88,6 +88,20 @@ def test_end_to_end_report_reconciles_and_detects_tampering(demo_directory, tmp_
     published = load_and_validate_run_v2(root)
     assert published.tags["rankable"] == "false"
     assert published.dataset_snapshots["dataset"] == data.fingerprint
+    native_metrics = json.loads((root / "metrics.json").read_text())
+    exported_metrics = json.loads((root / "standard/v2/metrics.json").read_text(encoding="utf-8"))
+    assert all(exported_metrics[key] == value for key, value in native_metrics.items())
+    assert exported_metrics["evidence_kind"] == "synthetic"
+    full_period, month_ends = exported_metrics["backtest_stats"]
+    assert full_period["total_return"] == native_metrics["full_period_return"]
+    assert full_period["max_drawdown"] == native_metrics["full_period_max_drawdown"]
+    assert full_period["ann_return"] is None and full_period["sharpe"] is None
+    assert month_ends["total_return"] == native_metrics["total_return"]
+    assert month_ends["ann_return"] == native_metrics["annual_return"]
+    assert month_ends["sharpe"] == native_metrics["sharpe"]
+    assert month_ends["max_drawdown"] == native_metrics["max_drawdown"]
+    assert month_ends["observations"] == native_metrics["observations"]
+    assert exported_metrics["measurement_basis"]["monthly_annualization_periods"] == 12
     exported_nav = pd.read_parquet(root / "standard/v2/returns.parquet")
     assert exported_nav.nav_units.iloc[0] / 10000 == pytest.approx(nav.total_value.iloc[0])
     assert verify_run(root)["max_reconciliation_error"] < 1e-6
@@ -98,6 +112,24 @@ def test_end_to_end_report_reconciles_and_detects_tampering(demo_directory, tmp_
     (root / "trades.csv").write_text("tampered", encoding="utf-8")
     with pytest.raises(ValueError, match="校验失败"):
         verify_run(root)
+
+
+@pytest.mark.parametrize("end,observations", [("2024-01-10", 0), ("2024-02-29", 1)])
+def test_short_reports_preserve_missing_monthly_metrics(
+    demo_directory, tmp_path, monkeypatch, end, observations
+):
+    monkeypatch.setattr("quant_fund.report.clean_git_commit", lambda root: "a" * 40)
+    data = Dataset.load(demo_directory)
+    result = run_backtest(data, BacktestConfig(start="2024-01-02", end=end, strategy="equal"))
+    root = export_run(result, data, demo_directory, tmp_path / "short-report")
+    published = json.loads((root / "standard/v2/metrics.json").read_text(encoding="utf-8"))
+    full, monthly = published["backtest_stats"]
+    assert isinstance(full["total_return"], float)
+    assert monthly["observations"] == observations
+    assert all(
+        monthly[key] is None for key in ("total_return", "ann_return", "sharpe", "max_drawdown")
+    )
+    assert verify_run(root)["max_reconciliation_error"] < 1e-6
 
 
 def test_empty_portfolio_still_reports_confirmed_receivables(make_dataset):

@@ -100,6 +100,8 @@ skfolio、OptimalPortfolios和qis已通过真实库调用测试。AKShare适配�
 
 下一步开发顺序与验收条件见[开发路线](docs/ROADMAP.md)，平台对接见[接口契约](docs/INTEGRATION.md)。
 
+完整研究导出同时保留`platform-snapshot.json`。在干净Git检出下，还通过quant-lab发布`standard/v2`的`research`适配视图，可供统一校验、索引和Report Hub只读展示；其中`investable=false`、`rankable=false`，不等同于完整执行账本认证。适配器不替代原始申赎、应收款和每日资金对账，也不让合成样例变成真实FOF业绩。
+
 ## 验证
 
 ```powershell
