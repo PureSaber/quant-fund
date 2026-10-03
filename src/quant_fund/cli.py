@@ -20,6 +20,9 @@ def main():
     demo = commands.add_parser("demo", help="生成可复现合成数据")
     demo.add_argument("--out", default="data/demo")
     demo.add_argument("--seed", type=int, default=20260926)
+    check = commands.add_parser("preflight", help="只读检查数据、配置和静态账户前置条件")
+    check.add_argument("--dataset", required=True)
+    check.add_argument("--config", required=True)
     for name in ("validate", "research", "run"):
         command = commands.add_parser(name)
         command.add_argument("--dataset", default="data/demo")
@@ -45,7 +48,11 @@ def main():
     fetch.add_argument("--code", required=True)
     fetch.add_argument("--out", required=True)
     args = parser.parse_args()
-    if args.command == "demo":
+    if args.command == "preflight":
+        from .preflight import preflight
+
+        print(json.dumps(preflight(args.dataset, args.config), ensure_ascii=False))
+    elif args.command == "demo":
         print(create_demo(args.out, args.seed))
     elif args.command == "import-nav":
         mapping = (

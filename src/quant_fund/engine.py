@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .data import Dataset, day
-from .research import allocate
+from .research import STRATEGIES, allocate
 
 
 @dataclass
@@ -381,6 +381,14 @@ class BacktestConfig:
     min_trade: float = 1000.0
 
     def __post_init__(self):
+        if self.strategy not in STRATEGIES:
+            raise ValueError("未知配置方法")
+        if not np.isfinite(self.initial_cash) or self.initial_cash <= 0:
+            raise ValueError("初始资金必须为有限正数")
+        if not 0 < self.max_weight <= 1 or not 0 <= self.cash_buffer < 1:
+            raise ValueError("权重上限或现金比例无效")
+        if pd.tseries.frequencies.to_offset(self.frequency).n <= 0:
+            raise ValueError("收益采样频率必须为正")
         if day(self.start) > day(self.end):
             raise ValueError("开始日期晚于结束日期")
         if self.min_periods < 3 or self.lookback < self.min_periods:
@@ -389,14 +397,24 @@ class BacktestConfig:
             raise ValueError("最小调仓金额必须为有限正数")
 
 
-def run_backtest(dataset: Dataset, config: BacktestConfig):
-    ledger = Ledger(dataset, config.initial_cash)
+def validate_backtest_inputs(dataset: Dataset, config: BacktestConfig):
+    """Validate static account prerequisites without creating or advancing a ledger."""
+    if any(f.currency != "CNY" for f in dataset.funds.values()):
+        raise ValueError("第一版账本只支持CNY")
+    if any(f.kind == "etf" for f in dataset.funds.values()):
+        raise ValueError("ETF交易回测需另接交易价格、分红和成交成本模型")
     dates = dataset.account_calendar[
         (dataset.account_calendar >= day(config.start))
         & (dataset.account_calendar <= day(config.end))
     ]
     if len(dates) < 2:
         raise ValueError("回测区间至少需要两个交易日")
+    return dates
+
+
+def run_backtest(dataset: Dataset, config: BacktestConfig):
+    dates = validate_backtest_inputs(dataset, config)
+    ledger = Ledger(dataset, config.initial_cash)
     # First session of each month: selection uses information known at that close.
     dealing_days = dates.intersection(dataset.calendar)
     month = dealing_days.to_period("M")

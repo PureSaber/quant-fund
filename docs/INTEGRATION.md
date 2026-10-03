@@ -2,6 +2,27 @@
 
 独立基金项目通过`platform-snapshot.json`向puresaber或其他平台提供只读研究结果。本次不改动平台现有仓库，也不共用其依赖环境、数据库或账户凭据。
 
+## 原生只读预检
+
+```powershell
+python -m quant_fund.cli preflight --dataset data/demo --config config.json
+```
+
+配置与`run --config`相同，接受完整BacktestConfig对象或带`config`字段的保存清单。
+成功时只在标准输出返回`quant-fund.preflight/v1` JSON，包含`software_preflight=pass`、
+`read_only=true`、`investable=false`、数据分类、基金与净值行数、账户日历区间、
+输入和配置摘要、规范化配置及检查边界。失败返回非零退出状态。
+
+预检复用Dataset及正式回测的静态前置校验，检查净值获知时点、条款、日历、
+CNY场外基金适用范围、策略名称、初始资金、权重/现金比例和研究区间。
+检查前后重新比较输入文件集合、内容摘要及修改时间，期间变化会失败。
+它不创建Ledger、不分配权重、不生成订单、不回放申赎、不写数据集或输出目录；
+不保证每个决策日共同历史充分或优化器可行。后续运行重读输入，预检不锁定输入。
+
+Studio可通过自己的模板调用该命令，并通过独立Python环境运行本应用。
+原生`nav.csv`的`nav`是期初为1的单位净值，金额币种为CNY；界面不能将初始资金
+作为该净值列的分母，也不能将数据分类为synthetic的产物显示为真实市场表现。
+
 ## Python接口
 
 ```python
