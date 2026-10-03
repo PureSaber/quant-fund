@@ -39,6 +39,8 @@ payload = platform_snapshot(result, data)
 
 对接验收：平台收到的资产分项之和应等于total_value；`mode`不能被忽略；每条目标保留时点；不能把预计流动性金额展示为已可用现金。接入后再考虑封装REST API和调度，不在首版引入第二个运行服务。
 
-## Exploratory standard/v2 export
+## 探索性standard/v2导出
 
-A clean Git checkout additionally publishes a `standard/v2` research profile through the pinned quant-lab adapter. It is always `investable=false` and `rankable=false`. A dirty or unavailable checkout retains the original report without claiming a clean code revision. Dataset identities use content hashes, and date-only NAV observations are stamped at the end of their UTC day. This profile does not certify a historical universe or replace the original accounting evidence.
+干净Git检出通过固定的quant-lab适配器额外发布`standard/v2`的`research`视图，始终标记`investable=false`和`rankable=false`。检出不干净或Git身份不可用时保留原报告，不声称干净提交身份。数据身份使用内容哈希，只有日期的净值观测标记为对应UTC日末；该视图不认证历史股票池或替代原始会计证据。
+
+使用`quant-lab validate --run-dir <研究目录>`核验后，可扫描到独立实验索引，由Report Hub按索引位置重新验证产物并展示。索引是可重建缓存；来源损坏时应显示不可用，不能使用旧缓存指标。`research`视图中的汇总NAV不能承担完整QExec现金分录、订单和成交链路的精确归因。
