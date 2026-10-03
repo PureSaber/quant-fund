@@ -54,7 +54,7 @@ Linux使用`python3.12 -m venv .venv`创建环境，并将以上`.\.venv\Scripts
 |qis/QuantInvestStrats|Euler波动风险贡献，并核对贡献合计|5.31.0|[官方仓库](https://github.com/ArturSepp/QuantInvestStrats)|
 |AKShare|可选公募净值快照采集；日增长率构建总收益序列|1.18.97|[官方仓库](https://github.com/akfamily/akshare)|
 
-skfolio、OptimalPortfolios和qis已通过真实库调用测试。AKShare适配器已通过模拟响应测试，尚未完成真实基金采集与数据对账。暂未引入Riskfolio-Lib、bt和xalpha，避免首版出现重复优化器、重复账本以及依赖冲突；后续可以新增适配器进行同口径比较。各依赖许可证以上游仓库为准，锁定版本不替代发布时的许可证清单。
+skfolio、OptimalPortfolios和qis已通过真实库调用测试。AKShare适配器已完成轻量真实净值采集、入库幂等和冲突回滚验证；首次采集历史按采集日获知，不据此声称历史FOF账本已获验证。HRP使用完整层次树做递归风险分配，显式保留全部叶节点，不运行与其权重无关的平面聚类数量选择；因此支持两只基金的小研究池，同时保留现金预算与权重上限检查。暂未引入Riskfolio-Lib、bt和xalpha，避免首版出现重复优化器、重复账本以及依赖冲突；后续可以新增适配器进行同口径比较。各依赖许可证以上游仓库为准，锁定版本不替代发布时的许可证清单。
 
 ## CSV/Excel导入
 

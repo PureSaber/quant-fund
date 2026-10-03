@@ -156,10 +156,18 @@ def allocate(
         )
         weights = wrapper_risk_budgeting(pd_covar=cov, constraints=constraints)
     else:
+        from skfolio.cluster import HierarchicalClustering
         from skfolio.optimization import HierarchicalRiskParity, RiskBudgeting
 
-        cls = HierarchicalRiskParity if strategy == "hrp" else RiskBudgeting
-        model = cls(max_weights=relative_cap)
+        if strategy == "hrp":
+            # HRP bisects the full linkage tree; it does not use flat cluster labels.
+            # The default gap-statistic selection needs at least three assets.
+            model = HierarchicalRiskParity(
+                max_weights=relative_cap,
+                hierarchical_clustering_estimator=HierarchicalClustering(max_clusters=n),
+            )
+        else:
+            model = RiskBudgeting(max_weights=relative_cap)
         model.fit(panel)
         weights = pd.Series(model.weights_, index=panel.columns)
     weights = weights.reindex(panel.columns) * budget
