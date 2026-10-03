@@ -22,6 +22,25 @@ def test_actual_optimizer_adapters(demo_directory, strategy):
     assert rc.risk_share.sum() == pytest.approx(1)
 
 
+@pytest.mark.parametrize("max_weight", [0.6, 1.0])
+def test_hrp_two_funds_matches_inverse_variance_split_and_budget(demo_directory, max_weight):
+    data = Dataset.load(demo_directory)
+    codes = list(data.funds)[:2]
+    data.funds = {code: data.funds[code] for code in codes}
+    weights, info = allocate(data, "2026-08-31", "hrp", max_weight=max_weight)
+    panel = data.returns("2026-08-31")[codes].dropna()
+    inverse_variance = 1 / panel.var()
+    expected = inverse_variance / inverse_variance.sum() * 0.95
+    if expected.max() > max_weight:
+        high = expected.idxmax()
+        expected.loc[high] = max_weight
+        expected.loc[expected.index != high] = 0.95 - max_weight
+    pd.testing.assert_series_equal(weights, expected.reindex(weights.index), check_names=False)
+    assert info["funds"] == sorted(codes)
+    assert weights.sum() == pytest.approx(0.95)
+    assert weights.max() <= max_weight + 1e-6
+
+
 def test_infeasible_constraints_are_explicit(demo_directory):
     data = Dataset.load(demo_directory)
     with pytest.raises(ValueError, match="不能满足"):
