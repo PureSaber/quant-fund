@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 
 import numpy as np
@@ -151,6 +152,36 @@ class Ledger:
                 unpaid.append(item)
         self.receivables = unpaid
 
+    @contextmanager
+    def _advance_transaction(self):
+        balances = self.current_date, self.cash, self.frozen
+        lots, orders = list(self.lots), list(self.orders)
+        records = [(record, vars(record).copy()) for record in lots + orders]
+        receivables = self.receivables
+        receivable_items = list(receivables)
+        dividends = set(self.dividends_processed)
+        # Daily processing only appends trades/history; do not copy the growing
+        # history or the read-only market dataset for each trading day.
+        trade_count, history_count = len(self.trades), len(self.history)
+        try:
+            yield
+        except BaseException:
+            self.current_date, self.cash, self.frozen = balances
+            # Restore records in place: submitted orders retain references to
+            # their reserved lots, and callers may hold either object.
+            for record, values in records:
+                vars(record).clear()
+                vars(record).update(values)
+            self.lots[:] = lots
+            self.orders[:] = orders
+            receivables[:] = receivable_items
+            self.receivables = receivables
+            self.dividends_processed.clear()
+            self.dividends_processed.update(dividends)
+            del self.trades[trade_count:]
+            del self.history[history_count:]
+            raise
+
     def advance(self, date):
         date = day(date)
         if date not in self.dataset.account_calendar:
@@ -159,6 +190,10 @@ class Ledger:
             expected = self.offset(self.current_date, 1)
             if date != expected:
                 raise ValueError("账本必须按交易日历逐日推进，不能跳过事件")
+        with self._advance_transaction():
+            self._advance_day(date)
+
+    def _advance_day(self, date):
         self.current_date = date
         self._settle(date)
         for order in self.orders:
