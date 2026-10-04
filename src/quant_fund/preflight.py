@@ -37,15 +37,25 @@ def preflight(dataset_path, config_path):
         "classification": dataset.metadata["classification"],
         "symbols": len(dataset.funds),
         "rows": len(dataset.nav),
+        "terms_mode": dataset.terms_mode,
+        "historical_terms_pit": dataset.historical_terms,
         "account_dates": len(dates),
         "interval": {"start": str(dates[0].date()), "end": str(dates[-1].date())},
         "input_sha256": dataset.fingerprint,
         "config_sha256": before[str(config_path)][0],
         "config": asdict(config),
-        "checks": ["dataset schema and known-at rules", "calendars", "static account inputs"],
+        "checks": [
+            "dataset schema and known-at rules",
+            "calendars",
+            "point-in-time fund terms" if dataset.historical_terms else "legacy static fund terms",
+            "static account inputs",
+        ],
         "limitations": [
             "No strategy allocation, historical return sufficiency or optimizer feasibility check",
             "No order replay, actual confirmations or complete real-business certification",
             "A later run reloads inputs; preflight does not freeze them",
+            "Legacy static terms are not historical point-in-time evidence"
+            if not dataset.historical_terms
+            else "Historical terms still require source-contract verification",
         ],
     }

@@ -74,6 +74,8 @@ class Fund:
             day(value)
         if self.nav_fee_basis != "net_all_fund_fees":
             raise ValueError("第一版只接受已扣基金层费用的净值；未扣业绩报酬数据需先规范化")
+        object.__setattr__(self, "sell_tiers", tuple(tuple(tier) for tier in self.sell_tiers))
+        object.__setattr__(self, "open_dates", tuple(self.open_dates))
 
     def eligible(self, date) -> bool:
         date = day(date)
@@ -86,6 +88,22 @@ class Fund:
             if holding_days < upper:
                 return rate
         raise ValueError("持有期超出费率表覆盖范围")
+
+
+@dataclass(frozen=True)
+class FundIdentity:
+    """Immutable identity fields; all mutable classifications and terms live in versions."""
+
+    fund_id: str
+    name: str
+    inception: str
+    known_at: str
+
+    def __post_init__(self):
+        if not self.fund_id or not self.name:
+            raise ValueError("基金代码和名称不能为空")
+        day(self.inception)
+        day(self.known_at)
 
 
 NAV_COLUMNS = ["fund_id", "nav_date", "known_at", "unit_nav", "total_return_nav", "source"]
@@ -129,6 +147,32 @@ class Dataset:
     fingerprint: str
     purpose_calendars: object | None = None
     disclosures: pd.DataFrame | None = None
+    term_versions: object | None = None
+    input_files: tuple[str, ...] = ()
+
+    @property
+    def historical_terms(self):
+        return self.term_versions is not None
+
+    @property
+    def terms_mode(self):
+        return "historical_pit" if self.historical_terms else "legacy_static"
+
+    def fund_at(self, fund_id, effective_on, known_on=None):
+        from .terms import legacy_fund
+
+        if fund_id not in self.funds:
+            raise ValueError(f"未知基金代码：{fund_id}")
+        known_on = effective_on if known_on is None else known_on
+        if self.term_versions is None:
+            return legacy_fund(self.funds[fund_id])
+        return self.term_versions.resolve(fund_id, effective_on, known_on)
+
+    def term_evidence(self, fund_id, effective_on, known_on=None, *, use=None):
+        known_on = effective_on if known_on is None else known_on
+        return self.fund_at(fund_id, effective_on, known_on).evidence(
+            effective_on=effective_on, known_on=known_on, use=use
+        )
 
     @property
     def account_calendar(self):
@@ -150,12 +194,26 @@ class Dataset:
     def load(cls, directory: str | Path) -> Dataset:
         root = Path(directory)
         names = ["funds.json", "nav.csv", "calendar.csv", "distributions.csv", "dataset.json"]
+        optional_names = ["calendars.json", "holdings.csv", "fund_terms.json"]
+        loaded_names = [*names, *(name for name in optional_names if (root / name).exists())]
         digest = hashlib.sha256()
-        for name in names:
+        for name in loaded_names:
             digest.update(name.encode())
             digest.update((root / name).read_bytes())
         items = json.loads((root / "funds.json").read_text(encoding="utf-8"))
-        funds = {item["fund_id"]: Fund(**item) for item in items}
+        if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+            raise ValueError("funds.json必须是对象数组")
+        if (root / "fund_terms.json").exists():
+            identity_fields = {"fund_id", "name", "inception", "known_at"}
+            for item in items:
+                if set(item) != identity_fields:
+                    raise ValueError(
+                        "历史条款模式的funds.json只能包含不可变身份字段："
+                        "fund_id/name/inception/known_at"
+                    )
+            funds = {item["fund_id"]: FundIdentity(**item) for item in items}
+        else:
+            funds = {item["fund_id"]: Fund(**item) for item in items}
         if not funds or len(funds) != len(items):
             raise ValueError("基金主表为空或存在重复代码")
         nav = validate_nav(pd.read_csv(root / "nav.csv", dtype={"fund_id": str}), set(funds))
@@ -193,7 +251,6 @@ class Dataset:
         if (root / "calendars.json").exists():
             from quant_data_kit.financial.calendars import CalendarBook, PurposeCalendar
 
-            digest.update((root / "calendars.json").read_bytes())
             records = json.loads((root / "calendars.json").read_text(encoding="utf-8"))
             purposes = CalendarBook([PurposeCalendar(**item) for item in records])
             if not {"dealing", "confirmation", "banking"}.issubset(
@@ -205,10 +262,26 @@ class Dataset:
         if (root / "holdings.csv").exists():
             from quant_data_kit.financial.holdings import validate_holdings
 
-            digest.update((root / "holdings.csv").read_bytes())
             disclosures = validate_holdings(pd.read_csv(root / "holdings.csv", dtype=str))
+        term_versions = None
+        if (root / "fund_terms.json").exists():
+            from .terms import FundTermsTable
+
+            term_versions = FundTermsTable(
+                funds,
+                json.loads((root / "fund_terms.json").read_text(encoding="utf-8")),
+            )
         return cls(
-            funds, nav, calendar, distributions, metadata, digest.hexdigest(), purposes, disclosures
+            funds,
+            nav,
+            calendar,
+            distributions,
+            metadata,
+            digest.hexdigest(),
+            purposes,
+            disclosures,
+            term_versions,
+            tuple(loaded_names),
         )
 
     def as_of(self, date) -> pd.DataFrame:
@@ -231,7 +304,10 @@ class Dataset:
         date = day(date)
         rows = self.as_of(date)
         series = {}
-        for code, fund in self.funds.items():
+        for code, identity in self.funds.items():
+            if date < max(day(identity.inception), day(identity.known_at)):
+                continue
+            fund = self.fund_at(code, date, date)
             if not fund.eligible(date):
                 continue
             values = rows.loc[rows.fund_id == code].set_index("nav_date").sort_index()
@@ -243,7 +319,15 @@ class Dataset:
             endpoints = pd.Series(self.calendar, index=self.calendar).resample(frequency).last()
             # A disclosed mid-period price is not a completed month/week observation.
             complete = last_date >= endpoints.reindex(last_date.index)
-            price = price.where((age <= fund.max_stale_days) & complete)
+            stale_limits = pd.Series(
+                {
+                    endpoint: self.fund_at(code, endpoint, date).max_stale_days
+                    for endpoint in last_date.index
+                    if endpoint <= date
+                },
+                dtype=float,
+            )
+            price = price.where((age <= stale_limits.reindex(age.index)) & complete)
             price = price.loc[price.index <= date]
             series[code] = price.pct_change(fill_method=None)
         return pd.DataFrame(series).tail(window).replace([np.inf, -np.inf], np.nan)

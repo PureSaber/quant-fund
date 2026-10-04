@@ -9,9 +9,9 @@ python -m quant_fund.cli preflight --dataset data/demo --config config.json
 ```
 
 配置与`run --config`相同，接受完整BacktestConfig对象或带`config`字段的保存清单。
-成功时只在标准输出返回`quant-fund.preflight/v1` JSON，包含`software_preflight=pass`、
+成功时只在标准输出返回`quant-fund.preflight/v1`JSON，包含`software_preflight=pass`、
 `read_only=true`、`investable=false`、数据分类、基金与净值行数、账户日历区间、
-输入和配置摘要、规范化配置及检查边界。失败返回非零退出状态。
+输入和配置摘要、规范化配置、`terms_mode`、`historical_terms_pit`及检查边界。失败返回非零退出状态。
 
 预检复用Dataset及正式回测的静态前置校验，检查净值获知时点、条款、日历、
 CNY场外基金适用范围、策略名称、初始资金、权重/现金比例和研究区间。
@@ -48,13 +48,17 @@ payload = platform_snapshot(result, data)
 |config|完整回测配置|
 |holdings|基金代码、份额、冻结份额、已知估值、金额、权重、滞后天数|
 |orders|模拟指令、申请/确认/到账日期、金额/份额、状态|
+|lots/order_lots|申购批次锁定版本及赎回订单引用的批次份额|
+|term_versions|研究配置与申赎订单实际消费的条款版本证据|
 |targets|每次成功配置的目标权重，含历史日期|
 |risk|权重、波动贡献、风险占比|
 |alerts|级别、基金代码、提示文本|
 |liquidity|已确认应收、待确认赎回、按当前估值测算的可赎回日历|
 |rebalance_review|最近一次成功配置目标、当前差额、下一开放日、可解锁份额和复核状态|
 
-表格日期序列化为ISO字符串；缺失值为JSON的`null`，空表为`[]`。金额使用CNY元，份额为基金份额，权重与费率为小数。`risk_share`为Euler贡献比例，可为负值，不等于资金权重。
+`dataset`新增`terms_mode`和`historical_terms_pit`可选字段；保持`quant-fund.portfolio-snapshot@1`，旧消费者可忽略新增字段。表格日期序列化为ISO字符串；缺失值为JSON的`null`，空表为`[]`。金额使用CNY元，份额为基金份额，权重与费率为小数。`risk_share`为Euler贡献比例，可为负值，不等于资金权重。
+
+原生研究目录升级为`quant-fund.research-run@2`。归档inputs复制Dataset实际加载的全部输入，包括可选日历、披露持仓和历史条款；`verify-run`除文件摘要和资金对账外，还会从归档输入重新选择每笔订单的申请日版本，复核开放/预约条件、确认/到账、确切申请净值、申赎费和Lot锁定证据。即使篡改后重新写入manifest文件摘要，错误版本绑定仍会失败。旧`research-run@1`且只有静态条款时继续按旧输入摘要验证，返回`legacy_static`和零条新绑定复核；旧产物缺失其原运行实际使用的可选输入时不能完整复核。
 
 `rebalance_review`沿用最近一次成功决策的目标，`target_date`可能早于`as_of`。增配差额未联合分配可用现金，不含预计成交费，因此不能直接映射为交易指令。真实账户接入需要独立的持仓与份额批次输入、条款版本、交易确认及对账流程。
 

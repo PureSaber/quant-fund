@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 from sklearn.covariance import LedoitWolf
@@ -56,14 +58,23 @@ def performance(returns: pd.Series, periods=12, risk_free=0.0) -> dict:
 
 
 def research_table(dataset: Dataset, date, frequency="ME", window=36):
+    date = day(date)
     panel = dataset.returns(date, frequency, window)
     rows = []
-    for code, fund in dataset.funds.items():
-        if day(fund.known_at) > day(date):
+    for code, identity in dataset.funds.items():
+        if date < max(day(identity.inception), day(identity.known_at)):
             continue
+        fund = dataset.fund_at(code, date, date)
         quote = dataset.quote(code, date)
         values = latest_complete_interval(panel[code]) if code in panel else pd.Series(dtype=float)
         stats = performance(values, 12 if frequency == "ME" else 52)
+        historical_versions = sorted(
+            {
+                dataset.fund_at(code, endpoint, date).version_id
+                for endpoint in panel.index
+                if endpoint <= date
+            }
+        )
         rows.append(
             {
                 "fund_id": code,
@@ -74,6 +85,11 @@ def research_table(dataset: Dataset, date, frequency="ME", window=36):
                 "nav_date": str(quote.nav_date.date()) if quote is not None else None,
                 "stale_days": (day(date) - quote.nav_date).days if quote is not None else None,
                 "eligible": fund.eligible(date),
+                "terms_version_id": fund.version_id,
+                "terms_known_at": fund.terms_known_at,
+                "historical_terms_pit": fund.historical_pit,
+                "classification_basis": "decision_date",
+                "history_terms_version_ids": json.dumps(historical_versions, ensure_ascii=False),
                 "history_start": str(values.index[0].date()) if len(values) else None,
                 "history_end": str(values.index[-1].date()) if len(values) else None,
                 **stats,
@@ -116,7 +132,8 @@ def allocate(
     # Avoid treating A/C share classes as independent diversification.
     selected, seen = [], set()
     for code in sorted(columns):
-        group = dataset.funds[code].share_group or code
+        fund = dataset.fund_at(code, date, date)
+        group = fund.share_group or code
         if group not in seen:
             selected.append(code)
             seen.add(group)
@@ -137,7 +154,8 @@ def allocate(
         weights = pd.Series(1 / n, index=panel.columns)
     elif strategy == "balanced":
         groups = {
-            g: [c for c in panel if dataset.funds[c].strategy == g] for g in ("equity", "bond")
+            g: [c for c in panel if dataset.fund_at(c, date, date).strategy == g]
+            for g in ("equity", "bond")
         }
         if not all(groups.values()):
             raise ValueError("60/40基线需要股票和债券两类基金")
@@ -178,11 +196,24 @@ def allocate(
         or abs(weights.sum() - budget) > 1e-6
     ):
         raise ValueError("配置结果未通过预算、非负性或单基金上限校验；停止本次调仓")
+    term_versions = {code: dataset.fund_at(code, date, date).version_id for code in panel.columns}
+    term_evidence = [
+        dataset.term_evidence(code, date, date, use="allocation_classification")
+        for code in panel.columns
+    ]
+    term_evidence.extend(
+        dataset.term_evidence(code, endpoint, date, use="research_return")
+        for code in panel.columns
+        for endpoint in panel.index
+    )
     return weights.clip(lower=0), {
         "periods": len(panel),
         "history_end": str(panel.index[-1].date()),
         "funds": list(panel.columns),
         "method": strategy,
+        "term_versions": term_versions,
+        "classification_basis": "decision_date",
+        "_term_evidence": term_evidence,
     }
 
 

@@ -1,15 +1,17 @@
 """Deterministic fixtures, explicitly classified as synthetic, never mixed with real data."""
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from .data import Fund, write_funds
+from .terms import TERM_FIELDS
 
 
-def create_demo(directory, seed=20260926):
+def create_demo(directory, seed=20260926, *, historical_terms=False):
     root = Path(directory)
     if root.exists() and any(root.iterdir()):
         raise ValueError("样本输出目录非空，请选择新目录")
@@ -75,7 +77,42 @@ def create_demo(directory, seed=20260926):
                     "source": f"synthetic_seed_{seed}",
                 }
             )
-    write_funds(funds, root / "funds.json")
+    if historical_terms:
+        (root / "funds.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "fund_id": fund.fund_id,
+                        "name": fund.name,
+                        "inception": fund.inception,
+                        "known_at": fund.known_at,
+                    }
+                    for fund in funds
+                ],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        versions = []
+        for fund in funds:
+            values = asdict(fund)
+            versions.append(
+                {
+                    "fund_id": fund.fund_id,
+                    "terms_id": f"{fund.fund_id}:initial",
+                    "version_id": f"{fund.fund_id}:initial:v1",
+                    "effective_from": fund.inception,
+                    "effective_to": None,
+                    "known_at": fund.known_at,
+                    **{name: values[name] for name in TERM_FIELDS},
+                }
+            )
+        (root / "fund_terms.json").write_text(
+            json.dumps(versions, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    else:
+        write_funds(funds, root / "funds.json")
     frame = pd.DataFrame(rows)
     frame.to_csv(root / "nav.csv", index=False)
     # A small import example, not an additional source for the research dataset.
@@ -94,6 +131,11 @@ def create_demo(directory, seed=20260926):
         "default_start": "2024-01-02",
         "calendar_source": "合成工作日日历，不代表中国交易所节假日",
         "known_at_policy": "模拟公募T+1、私募T+3获知；各产品条款为合成设定",
+        "terms_policy": (
+            "完整合成历史条款版本，仅用于软件验证"
+            if historical_terms
+            else "旧静态条款快照，不是历史PIT证据"
+        ),
         "notes": "不包含真实基金、实际收益或投资建议；示例净值已扣基金层费用。",
     }
     (root / "dataset.json").write_text(
