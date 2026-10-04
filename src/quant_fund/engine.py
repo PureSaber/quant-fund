@@ -18,6 +18,9 @@ class Lot:
     bought: pd.Timestamp
     shares: float
     reserved: float = 0.0
+    lock_days: int | None = None
+    terms_version_id: str | None = None
+    historical_terms_pit: bool = False
 
 
 @dataclass
@@ -33,16 +36,25 @@ class Order:
     shares: float = 0.0
     status: str = "pending"
     lots: list = field(default_factory=list, repr=False)
+    terms_id: str = ""
+    terms_version_id: str = ""
+    terms_known_at: pd.Timestamp | None = None
+    terms_effective_from: pd.Timestamp | None = None
+    terms_effective_to: pd.Timestamp | None = None
+    historical_terms_pit: bool = False
+    terms: object | None = field(default=None, repr=False)
 
 
 class Ledger:
     def __init__(self, dataset: Dataset, initial_cash=1_000_000.0):
         if not np.isfinite(initial_cash) or initial_cash <= 0:
             raise ValueError("初始资金必须为有限正数")
-        if any(f.currency != "CNY" for f in dataset.funds.values()):
+        if not dataset.historical_terms and any(
+            f.currency != "CNY" for f in dataset.funds.values()
+        ):
             raise ValueError("第一版账本只支持CNY；外币基金须提供经验证的汇率与换汇账本后接入")
         self.dataset = dataset
-        if any(f.kind == "etf" for f in dataset.funds.values()):
+        if not dataset.historical_terms and any(f.kind == "etf" for f in dataset.funds.values()):
             raise ValueError("ETF可用于收益研究；交易回测需另接交易价格、分红和成交成本模型")
         self.initial_cash = initial_cash
         self.cash = initial_cash
@@ -55,56 +67,87 @@ class Ledger:
         self.current_date = None
         self.dividends_processed = set()
 
-    def offset(self, date, lag, purpose=None):
+    def offset(self, date, lag, purpose=None, *, known_on=None):
         if purpose is not None and self.dataset.purpose_calendars is not None:
-            calendar, at = self.dataset.purpose_calendar(purpose, date, self.current_date or date)
+            calendar, at = self.dataset.purpose_calendar(
+                purpose, date, known_on or self.current_date or date
+            )
             return calendar.advance(date, lag, at=at, purpose=purpose)
         calendar = self.dataset.account_calendar
         index = calendar.searchsorted(day(date)) + lag
         return calendar[index] if index < len(calendar) else None
 
-    def dealing_date(self, code, submitted, *, not_before=None):
-        fund = self.dataset.funds[code]
-        earliest = max(
-            day(submitted) + pd.Timedelta(days=1),
-            day(submitted) + pd.Timedelta(days=fund.notice_days),
-        )
+    def dealing_terms(self, code, submitted, *, not_before=None):
+        submitted = day(submitted)
+        earliest = submitted + pd.Timedelta(days=1)
         if not_before is not None:
             earliest = max(earliest, day(not_before))
         candidates = self.dataset.calendar[self.dataset.calendar >= earliest]
-        if self.dataset.purpose_calendars is not None:
-            calendar, at = self.dataset.purpose_calendar("dealing", earliest, submitted)
-            candidates = candidates.intersection(pd.DatetimeIndex(calendar.open_days))
-        if fund.open_dates:
-            candidates = candidates.intersection(pd.DatetimeIndex(fund.open_dates))
-        if fund.end_date:
-            candidates = candidates[candidates < day(fund.end_date)]
-        return candidates[0] if len(candidates) else None
+        for candidate in candidates:
+            fund = self.dataset.fund_at(code, candidate, submitted)
+            if candidate < submitted + pd.Timedelta(days=fund.notice_days):
+                continue
+            if self.dataset.purpose_calendars is not None:
+                calendar, at = self.dataset.purpose_calendar("dealing", candidate, submitted)
+                if not calendar.is_open(candidate, at=at, purpose="dealing"):
+                    continue
+            if fund.open_dates and candidate not in pd.DatetimeIndex(fund.open_dates):
+                continue
+            if not fund.eligible(candidate):
+                continue
+            return candidate, fund
+        return None, None
+
+    def dealing_date(self, code, submitted, *, not_before=None):
+        return self.dealing_terms(code, submitted, not_before=not_before)[0]
+
+    def lot_lock_days(self, lot):
+        if lot.lock_days is not None:
+            return lot.lock_days
+        if self.dataset.historical_terms:
+            raise ValueError("历史条款模式的份额批次缺少申购版本和锁定期证据")
+        return self.dataset.funds[lot.fund_id].lock_days
+
+    def lot_is_unlocked(self, lot, deal_date):
+        return (day(deal_date) - lot.bought).days >= self.lot_lock_days(lot)
 
     def submit(self, code, side, *, amount=0.0, shares=0.0):
         if self.current_date is None:
             raise ValueError("必须先推进到决策日")
-        fund = self.dataset.funds[code]
+        fund = self.dataset.fund_at(code, self.current_date, self.current_date)
         if side not in {"BUY", "SELL"}:
             raise ValueError("指令方向必须为BUY或SELL")
         if not np.isfinite([amount, shares]).all():
             raise ValueError("指令数量无效")
         if not fund.eligible(self.current_date) and side == "BUY":
             raise ValueError("当前日期基金不在可申购范围")
-        deal = self.dealing_date(code, self.current_date)
+        deal, order_terms = self.dealing_terms(code, self.current_date)
         if deal is None:
             raise ValueError("日历范围内没有下一开放日")
+        if order_terms.currency != "CNY":
+            raise ValueError("第一版账本只支持CNY")
+        if order_terms.kind == "etf":
+            raise ValueError("ETF交易回测需另接交易价格、分红和成交成本模型")
         quote = self.dataset.quote(code, self.current_date)
         if quote is None or (self.current_date - quote.nav_date).days > fund.max_stale_days:
             raise ValueError("最新已知净值缺失或过期")
         # Resolve calendars before reserving money/shares; any failure is mutation-free.
-        confirmation = self.offset(deal, fund.confirm_lag, "confirmation")
-        settlement = self.offset(deal, fund.settle_lag, "banking")
+        confirmation = self.offset(
+            deal, order_terms.confirm_lag, "confirmation", known_on=self.current_date
+        )
+        settlement = self.offset(
+            deal, order_terms.settle_lag, "banking", known_on=self.current_date
+        )
         if settlement is not None and confirmation is not None and settlement < confirmation:
             raise ValueError("资金到账日不能早于份额确认日")
         reserved = []
         if side == "BUY":
-            if amount <= 0 or amount < fund.min_buy or amount > self.cash + 1e-8 or shares != 0:
+            if (
+                amount <= 0
+                or amount < order_terms.min_buy
+                or amount > self.cash + 1e-8
+                or shares != 0
+            ):
                 raise ValueError("申购金额、最低申购额或可用资金不满足要求")
             self.cash -= amount
             self.frozen += amount
@@ -113,7 +156,7 @@ class Ledger:
                 raise ValueError("赎回份额必须为正且申购金额为0")
             remaining = shares
             for lot in self.lots:
-                if lot.fund_id != code or (deal - lot.bought).days < fund.lock_days:
+                if lot.fund_id != code or not self.lot_is_unlocked(lot, deal):
                     continue
                 take = min(remaining, lot.shares - lot.reserved)
                 if take > 1e-10:
@@ -134,6 +177,13 @@ class Ledger:
             amount,
             shares,
             lots=reserved,
+            terms_id=order_terms.terms_id,
+            terms_version_id=order_terms.version_id,
+            terms_known_at=order_terms.terms_known_at,
+            terms_effective_from=order_terms.effective_from,
+            terms_effective_to=order_terms.effective_to,
+            historical_terms_pit=order_terms.historical_pit,
+            terms=order_terms,
         )
         self.orders.append(order)
         self.check()
@@ -207,13 +257,24 @@ class Ledger:
             if quote is None:
                 continue  # Exact dealing NAV is required; never execute at a stale carried price.
             nav = float(quote.unit_nav)
-            fund = self.dataset.funds[order.fund_id]
+            fund = order.terms
+            if fund is None:
+                raise ValueError("订单缺少提交时冻结的条款版本")
             if order.side == "BUY":
                 net = order.amount / (1 + fund.buy_fee)
                 fee = order.amount - net
                 shares = net / nav
                 self.frozen -= order.amount
-                self.lots.append(Lot(order.fund_id, order.deal_date, shares))
+                self.lots.append(
+                    Lot(
+                        order.fund_id,
+                        order.deal_date,
+                        shares,
+                        lock_days=fund.lock_days,
+                        terms_version_id=fund.version_id,
+                        historical_terms_pit=fund.historical_pit,
+                    )
+                )
                 gross = order.amount
             else:
                 shares = order.shares
@@ -247,6 +308,13 @@ class Ledger:
                     "shares": shares,
                     "gross": gross,
                     "fee": fee,
+                    "terms_id": order.terms_id,
+                    "terms_version_id": order.terms_version_id,
+                    "terms_known_at": order.terms_known_at,
+                    "terms_effective_from": order.terms_effective_from,
+                    "terms_effective_to": order.terms_effective_to,
+                    "historical_terms_pit": order.historical_terms_pit,
+                    "lot_lock_days": fund.lock_days if order.side == "BUY" else None,
                 }
             )
         self._dividends(date)
@@ -291,10 +359,11 @@ class Ledger:
 
     def holdings(self):
         rows = []
-        for code, fund in self.dataset.funds.items():
+        for code in self.dataset.funds:
             shares = sum(lot.shares for lot in self.lots if lot.fund_id == code)
             if shares <= 1e-10:
                 continue
+            fund = self.dataset.fund_at(code, self.current_date, self.current_date)
             quote = self.dataset.quote(code, self.current_date)
             if quote is None:
                 raise ValueError(f"持仓{code}缺少估值")
@@ -325,6 +394,10 @@ class Ledger:
                     "value": shares * mark,
                     "nav_date": quote.nav_date,
                     "stale_days": (self.current_date - quote.nav_date).days,
+                    "terms_id": fund.terms_id,
+                    "terms_version_id": fund.version_id,
+                    "terms_known_at": fund.terms_known_at,
+                    "historical_terms_pit": fund.historical_pit,
                 }
             )
         return pd.DataFrame(rows)
@@ -363,7 +436,30 @@ class Ledger:
 
     def orders_frame(self):
         return pd.DataFrame(
-            [{k: v for k, v in asdict(o).items() if k != "lots"} for o in self.orders]
+            [
+                {k: v for k, v in asdict(o).items() if k not in {"lots", "terms"}}
+                for o in self.orders
+            ]
+        )
+
+    def lots_frame(self):
+        return pd.DataFrame([asdict(lot) for lot in self.lots])
+
+    def order_lots_frame(self):
+        return pd.DataFrame(
+            [
+                {
+                    "order_id": order.order_id,
+                    "fund_id": order.fund_id,
+                    "lot_bought": lot.bought,
+                    "shares": shares,
+                    "lot_terms_version_id": lot.terms_version_id,
+                    "lot_lock_days": self.lot_lock_days(lot),
+                    "historical_terms_pit": lot.historical_terms_pit,
+                }
+                for order in self.orders
+                for lot, shares in order.lots
+            ]
         )
 
 
@@ -399,16 +495,27 @@ class BacktestConfig:
 
 def validate_backtest_inputs(dataset: Dataset, config: BacktestConfig):
     """Validate static account prerequisites without creating or advancing a ledger."""
-    if any(f.currency != "CNY" for f in dataset.funds.values()):
-        raise ValueError("第一版账本只支持CNY")
-    if any(f.kind == "etf" for f in dataset.funds.values()):
-        raise ValueError("ETF交易回测需另接交易价格、分红和成交成本模型")
     dates = dataset.account_calendar[
         (dataset.account_calendar >= day(config.start))
         & (dataset.account_calendar <= day(config.end))
     ]
     if len(dates) < 2:
         raise ValueError("回测区间至少需要两个交易日")
+    if dataset.historical_terms:
+        for code, identity in dataset.funds.items():
+            for date in dates:
+                if date < max(day(identity.inception), day(identity.known_at)):
+                    continue
+                fund = dataset.fund_at(code, date, date)
+                if fund.currency != "CNY":
+                    raise ValueError(f"{code}在{date.date()}的有效条款不是CNY")
+                if fund.kind == "etf":
+                    raise ValueError(f"{code}在{date.date()}的有效条款为ETF，交易模型不支持")
+    else:
+        if any(f.currency != "CNY" for f in dataset.funds.values()):
+            raise ValueError("第一版账本只支持CNY")
+        if any(f.kind == "etf" for f in dataset.funds.values()):
+            raise ValueError("ETF交易回测需另接交易价格、分红和成交成本模型")
     return dates
 
 
@@ -419,7 +526,7 @@ def run_backtest(dataset: Dataset, config: BacktestConfig):
     dealing_days = dates.intersection(dataset.calendar)
     month = dealing_days.to_period("M")
     decision_dates = set(dealing_days[~month.duplicated()])
-    decisions, targets, events = [], [], []
+    decisions, targets, events, term_versions = [], [], [], []
     for date in dates:
         ledger.advance(date)
         if date not in decision_dates:
@@ -438,6 +545,7 @@ def run_backtest(dataset: Dataset, config: BacktestConfig):
         except ValueError as error:
             decisions.append({"date": date, "status": "blocked", "reason": str(error)})
             continue
+        term_versions.extend(info.pop("_term_evidence"))
         decisions.append({"date": date, "status": "allocated", "reason": "", **info})
         targets.extend(
             {"date": date, "fund_id": code, "weight": float(weight)}
@@ -463,11 +571,10 @@ def run_backtest(dataset: Dataset, config: BacktestConfig):
                     next_deal = ledger.dealing_date(code, date)
                     if next_deal is None:
                         raise ValueError("日历范围内没有赎回开放日")
-                    fund = dataset.funds[code]
                     available = sum(
                         lot.shares - lot.reserved
                         for lot in ledger.lots
-                        if lot.fund_id == code and (next_deal - lot.bought).days >= fund.lock_days
+                        if lot.fund_id == code and ledger.lot_is_unlocked(lot, next_deal)
                     )
                     quantity = min(-delta / current.loc[code, "mark"], available)
                     if quantity <= 1e-10:
@@ -475,27 +582,66 @@ def run_backtest(dataset: Dataset, config: BacktestConfig):
                     ledger.submit(code, "SELL", shares=quantity)
                 except ValueError as error:
                     events.append({"date": date, "fund_id": code, "reason": str(error)})
-            elif delta >= max(config.min_trade, dataset.funds[code].min_buy):
-                buys[code] = delta
+            elif delta >= config.min_trade:
+                try:
+                    next_deal, buy_terms = ledger.dealing_terms(code, date)
+                    if next_deal is None:
+                        raise ValueError("日历范围内没有申购开放日")
+                    if delta >= max(config.min_trade, buy_terms.min_buy):
+                        buys[code] = (delta, buy_terms.min_buy)
+                except ValueError as error:
+                    events.append({"date": date, "fund_id": code, "reason": str(error)})
         # Do not spend anticipated sale proceeds. Scale buys against already available cash.
         spendable = max(0, ledger.cash - config.cash_buffer * snapshot["total_value"])
-        scale = min(1, spendable / sum(buys.values())) if buys else 0
-        for code, amount in buys.items():
+        requested = sum(amount for amount, _ in buys.values())
+        scale = min(1, spendable / requested) if buys else 0
+        for code, (amount, min_buy) in buys.items():
             amount *= scale
-            if amount < max(config.min_trade, dataset.funds[code].min_buy):
+            if amount < max(config.min_trade, min_buy):
                 continue
             try:
                 ledger.submit(code, "BUY", amount=amount)
             except ValueError as error:
                 events.append({"date": date, "fund_id": code, "reason": str(error)})
         ledger.history[-1] = ledger.snapshot()
+    term_versions.extend(
+        {
+            "fund_id": order.fund_id,
+            "terms_id": order.terms_id,
+            "version_id": order.terms_version_id,
+            "effective_from": order.terms_effective_from,
+            "effective_to": order.terms_effective_to,
+            "terms_known_at": order.terms_known_at,
+            "effective_on": order.deal_date,
+            "known_on": order.submitted,
+            "use": f"order_{order.side.lower()}",
+            "historical_pit": order.historical_terms_pit,
+        }
+        for order in ledger.orders
+    )
+    if term_versions:
+        term_versions = list(
+            {
+                (
+                    item["fund_id"],
+                    item["version_id"],
+                    item["effective_on"],
+                    item["known_on"],
+                    item["use"],
+                ): item
+                for item in term_versions
+            }.values()
+        )
     return {
         "ledger": ledger,
         "nav": pd.DataFrame(ledger.history).set_index("date"),
         "trades": pd.DataFrame(ledger.trades),
         "orders": ledger.orders_frame(),
+        "lots": ledger.lots_frame(),
+        "order_lots": ledger.order_lots_frame(),
         "decisions": pd.DataFrame(decisions),
         "targets": pd.DataFrame(targets),
         "events": pd.DataFrame(events),
+        "term_versions": pd.DataFrame(term_versions),
         "config": asdict(config),
     }

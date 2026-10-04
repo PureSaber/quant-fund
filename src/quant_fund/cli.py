@@ -20,6 +20,7 @@ def main():
     demo = commands.add_parser("demo", help="生成可复现合成数据")
     demo.add_argument("--out", default="data/demo")
     demo.add_argument("--seed", type=int, default=20260926)
+    demo.add_argument("--historical-terms", action="store_true")
     check = commands.add_parser("preflight", help="只读检查数据、配置和静态账户前置条件")
     check.add_argument("--dataset", required=True)
     check.add_argument("--config", required=True)
@@ -53,7 +54,7 @@ def main():
 
         print(json.dumps(preflight(args.dataset, args.config), ensure_ascii=False))
     elif args.command == "demo":
-        print(create_demo(args.out, args.seed))
+        print(create_demo(args.out, args.seed, historical_terms=args.historical_terms))
     elif args.command == "import-nav":
         mapping = (
             json.loads(Path(args.mapping).read_text(encoding="utf-8")) if args.mapping else None
@@ -90,6 +91,8 @@ def main():
                         "observations": len(dataset.nav),
                         "classification": dataset.metadata["classification"],
                         "sha256": dataset.fingerprint,
+                        "terms_mode": dataset.terms_mode,
+                        "historical_terms_pit": dataset.historical_terms,
                     },
                     ensure_ascii=False,
                 )

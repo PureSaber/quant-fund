@@ -1,10 +1,11 @@
-# 数据契约v1
+# 数据契约v2
 
-原有研究数据集包含以下五个文件，输入指纹覆盖其文件名和原始字节；新增 `calendars.json` / `holdings.csv` 也纳入指纹。净值/申赎日期使用无时区的`YYYY-MM-DD`，模型粒度为日，决策发生在收盘后。新日历和披露契约的 available_at 必须带时区。产品在真实市场的日内截止时间尚未建模。
+原有研究数据集包含以下五个文件；`calendars.json`、`holdings.csv`和`fund_terms.json`存在时也纳入输入指纹。v2指纹对每个实际加载文件同时绑定文件名和原始字节。净值/申赎日期使用无时区的`YYYY-MM-DD`，模型粒度为日，决策发生在收盘后。新日历和披露契约的available_at必须带时区。产品在真实市场的日内截止时间尚未建模。
 
 |文件|内容|
 |---|---|
-|funds.json|基金主表与固定产品条款，数组形式|
+|funds.json|旧模式为固定产品快照；历史条款模式只含不可变身份字段|
+|fund_terms.json|可选；存在时启用按有效期及获知日选择的完整条款/分类版本|
 |nav.csv|单位净值与分红再投资收益净值的历史版本|
 |calendar.csv|`date`列，唯一、升序、显式交易日历|
 |distributions.csv|现金分红；没有分红时仍保留表头|
@@ -25,12 +26,21 @@
 
 研究指标使用各基金最后一段连续完整月份；同类百分位要求基金类型、策略和样本起止相同。同类不足两只不显示排名。优化器使用窗口内完整共同观测，至少12期，既不填充缺失观测，也不把不同频率的风险直接混合。
 
-## 基金主表
+## 基金身份、旧静态快照与历史条款
 
-必填：`fund_id,name,manager,strategy,kind,inception,known_at`。`kind`为`public/private/etf`；策略示例为`equity/bond/cta/neutral`。首版申赎模型只支持CNY，净值必须标记`nav_fee_basis=net_all_fund_fees`。
+没有`fund_terms.json`时，`funds.json`沿用旧契约，必填`fund_id,name,manager,strategy,kind,inception,known_at`；其他固定条款继续使用下表的旧默认值和校验。此路径标记为`legacy_static`和`historical_terms_pit=false`，保持旧计算语义，但不能作为历史条款PIT证据。
+
+存在`fund_terms.json`时，`funds.json`每项只能包含`fund_id,name,inception,known_at`。名称在v2中是不可变身份；管理人、策略和kind属于版本表。不得在身份文件中保留“最新条款”作为缺失版本的回退。
+
+`fund_terms.json`是完整版本数组。每项必须包含`fund_id,terms_id,version_id,effective_from,effective_to,known_at`和下表全部条款字段。`terms_id`标识同一逻辑条款的修订链；`version_id`全局唯一；同一基金/terms_id/known_at只能有一个版本。`effective_to`为不含该日的上界，无截止时必须为JSON的`null`，不能使用空字符串。每个获知切片先按terms_id和known_at取当时最新修订，再按`effective_from <= effective_on < effective_to`筛选；结果缺失、重叠或歧义均失败。版本ID不参与新旧排序。
+
+`kind`为`public/private/etf`；策略示例为`equity/bond/cta/neutral`。首版申赎模型只支持CNY，净值必须标记`nav_fee_basis=net_all_fund_fees`。
 
 |字段|含义|默认/要求|
 |---|---|---|
+|manager|管理人分类|版本模式必填非空|
+|strategy|策略分类|版本模式必填非空|
+|kind|基金交易类型|`public/private/etf`|
 |currency|计价币种|CNY|
 |end_date|终止日，含当日不再纳入新配置|可空；无自动清算|
 |share_group|同一基金不同份额分组|同组只选一个合格代码，按代码排序|
@@ -43,8 +53,13 @@
 |open_dates|显式开放日数组|私募必填；公募空数组代表日历各交易日|
 |min_buy|最低申购金额|币种金额，默认0|
 |max_stale_days|研究/下单允许净值滞后|自然日，默认10|
+|nav_fee_basis|基金净值费用口径|只接受`net_all_fund_fees`|
 
-历史条款变化不应直接覆盖当前主表后用于过去回测。首版需选择条款固定的研究区间，或者先实现有效期版本表。
+研究决策日D使用`effective_on=D,known_on=D`的分类。收益历史仍是同一产品的完整历史，不表示整段历史都属于决策日策略；监控代理篮子在每个收益端点使用该端点有效、监控日已知的分类。
+
+订单提交日S逐日检查候选申请日的条款，使用`effective_on=申请日,known_on=S`解析开放日、预约期、终止日和最低金额。选中申请日后，订单冻结该版本、确认/到账滞后和申赎费率；确认只等待确切申请净值，不重新读取后来获知的条款。申购确认生成的Lot冻结申购版本和lock_days；以后赎回逐Lot使用该锁定期，缺少批次证据时历史条款模式失败。赎回费使用赎回申请日冻结的sell_tiers和各Lot持有天数。
+
+管理人、策略、开放日、费率等真实业务资料仍需来源合同和实际获知时间核验；`historical_pit`描述选择模型能力，不自动证明来源真实或完整。
 
 ## 分红与资金
 

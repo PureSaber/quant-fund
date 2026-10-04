@@ -26,6 +26,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.lock
 .\.venv\Scripts\python.exe -m pip install --no-deps -e .
 .\.venv\Scripts\python.exe -m quant_fund.cli demo --out data/demo
+.\.venv\Scripts\python.exe -m quant_fund.cli demo --historical-terms --out data/demo-terms
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
@@ -96,7 +97,7 @@ skfolio、OptimalPortfolios和qis已通过真实库调用测试。AKShare适配�
 - 当前可交易模型为CNY场外公募和私募。ETF可做净值研究，交易回测明确拒绝，需另加场内成交价格、滑点和分红模型；外币交易同样需补汇率与换汇账本。
 - 私募净值直接使用真实披露频率，缺失月份不插值。日度账本沿用最近已知估值并显示滞后，平滑曲线不能解释为低风险。
 - 仅接受已扣基金层管理费、托管费及业绩报酬的净值；FOF自身层面的管理费、税、现金利息、业绩报酬高水位等尚未实现。申购费与按持有天数分档的赎回费已实现。
-- 产品条款和分类目前是固定快照，未实现历史条款/管理人变更版本。对发生变更的真实产品，需先增加版本表，否则不能宣称完整的历史时点回测。
+- 可选`fund_terms.json`支持管理人、策略、开放日、锁定、确认/到账和申赎费的历史版本。订单冻结申请日有效且提交日已知的版本，Lot冻结申购批次锁定期；报告保留实际消费版本并可原生复核。没有版本文件的旧`funds.json`继续按静态快照运行，并明确标记为非历史PIT。
 - 分红采用除息日前已持有份额的简化权益规则；遇到前期申赎未确认导致权益不明会停止。转增、拆分、红利再投、复杂登记日规则、巨额赎回比例确认和清算尚未实现。
 - 开放日、预约期、确认与到账滞后均按输入条款模拟。真实交易日历与真实合同需要验证；默认日历只排除周末，没有中国节假日。
 - 监控基于模拟组合期末状态，未接入真实账户持仓、自动通知或实时调度。调仓差额是复核清单，不会生成或发送真实订单。

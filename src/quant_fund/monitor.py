@@ -20,17 +20,15 @@ def rebalance_review(result, dataset):
     pending = {o.fund_id for o in ledger.orders if o.status == "pending"}
     rows = []
     for code in sorted(set(weights.index) | set(values.index)):
-        fund = dataset.funds[code]
+        fund = dataset.fund_at(code, ledger.current_date, ledger.current_date)
         actual = float(values.get(code, 0))
         target = float(weights.get(code, 0))
         gap = target * total - actual
-        deal = ledger.dealing_date(code, ledger.current_date)
+        deal, deal_terms = ledger.dealing_terms(code, ledger.current_date)
         available = sum(
             lot.shares - lot.reserved
             for lot in ledger.lots
-            if lot.fund_id == code
-            and deal is not None
-            and (deal - lot.bought).days >= fund.lock_days
+            if lot.fund_id == code and deal is not None and ledger.lot_is_unlocked(lot, deal)
         )
         quote = dataset.quote(code, ledger.current_date)
         if abs(gap) < result["config"]["min_trade"]:
@@ -57,6 +55,9 @@ def rebalance_review(result, dataset):
                 "direction": "增配" if gap > 0 else "减配" if gap < 0 else "持平",
                 "next_open_date": deal,
                 "unlocked_shares_at_next_open": available,
+                "terms_version_id": deal_terms.version_id if deal_terms is not None else None,
+                "terms_known_at": (deal_terms.terms_known_at if deal_terms is not None else None),
+                "historical_terms_pit": fund.historical_pit,
                 "status": status,
             }
         )
@@ -76,7 +77,7 @@ def monitor(result, dataset):
         alerts.append({"severity": "info", "fund_id": "", "message": "当前没有已确认基金持仓"})
     holdings["weight"] = holdings.value / snapshot["total_value"]
     for item in holdings.itertuples():
-        fund = dataset.funds[item.fund_id]
+        fund = dataset.fund_at(item.fund_id, date, date)
         if item.stale_days > fund.max_stale_days:
             alerts.append(
                 {
@@ -109,13 +110,16 @@ def monitor(result, dataset):
         available = lot.shares - lot.reserved
         if available <= 1e-10:
             continue
-        fund = dataset.funds[lot.fund_id]
-        deal = ledger.dealing_date(
+        deal, terms = ledger.dealing_terms(
             lot.fund_id,
             date,
-            not_before=lot.bought + pd.Timedelta(days=fund.lock_days),
+            not_before=lot.bought + pd.Timedelta(days=ledger.lot_lock_days(lot)),
         )
-        due = ledger.offset(deal, fund.settle_lag, "banking") if deal is not None else None
+        due = (
+            ledger.offset(deal, terms.settle_lag, "banking", known_on=date)
+            if deal is not None
+            else None
+        )
         mark = holdings.set_index("fund_id").loc[lot.fund_id, "mark"]
         liquidity.append(
             {
@@ -124,6 +128,9 @@ def monitor(result, dataset):
                 "deal_date": deal,
                 "arrival_date": due,
                 "estimated_amount": available * mark,
+                "terms_version_id": terms.version_id if terms is not None else None,
+                "lot_terms_version_id": lot.terms_version_id,
+                "lot_lock_days": ledger.lot_lock_days(lot),
                 "basis": "按当前估值、未扣未来赎回费；不包含未提交指令的成交保证",
             }
         )
@@ -148,6 +155,9 @@ def monitor(result, dataset):
                     "deal_date": order.deal_date,
                     "arrival_date": order.settle_date,
                     "estimated_amount": order.shares * mark,
+                    "terms_version_id": order.terms_version_id,
+                    "lot_terms_version_id": None,
+                    "lot_lock_days": None,
                     "basis": "待确认赎回，按当前估值未扣费；披露延迟可能推迟到账",
                 }
             )
@@ -158,19 +168,23 @@ def monitor(result, dataset):
             risk = risk_contributions(panel, holdings.set_index("fund_id").weight, periods)
     except ValueError as error:
         alerts.append({"severity": "warning", "fund_id": "", "message": str(error)})
-    # Equal-weight public equity/bond peer baskets are explicit proxies, not official factors.
+    # Each endpoint uses the classification effective then and known on the monitoring date.
+    # The return history remains the same product history across classification changes.
     factors = {}
     for group in ("equity", "bond"):
-        codes = [
-            c
-            for c in panel
-            if dataset.funds[c].strategy == group and dataset.funds[c].kind == "public"
-        ]
-        if codes:
-            factors[group] = panel[codes].mean(axis=1, skipna=False)
+        values = {}
+        for endpoint, row in panel.iterrows():
+            codes = []
+            for code in panel:
+                terms = dataset.fund_at(code, endpoint, date)
+                if terms.strategy == group and terms.kind == "public":
+                    codes.append(code)
+            values[endpoint] = row[codes].mean(skipna=False) if codes else np.nan
+        if pd.Series(values).notna().any():
+            factors[group] = pd.Series(values)
     factor_frame = pd.DataFrame(factors)
     for code in panel:
-        if dataset.funds[code].kind != "private" or len(factors) < 2:
+        if dataset.fund_at(code, date, date).kind != "private" or len(factors) < 2:
             continue
         try:
             current = style_regression(panel[code], factor_frame, window=12)
