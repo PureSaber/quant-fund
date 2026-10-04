@@ -102,8 +102,8 @@ class FundIdentity:
     def __post_init__(self):
         if not self.fund_id or not self.name:
             raise ValueError("基金代码和名称不能为空")
-        if day(self.known_at) < day(self.inception):
-            raise ValueError("基金首次获知日不能早于成立日")
+        day(self.inception)
+        day(self.known_at)
 
 
 NAV_COLUMNS = ["fund_id", "nav_date", "known_at", "unit_nav", "total_return_nav", "source"]
@@ -305,7 +305,7 @@ class Dataset:
         rows = self.as_of(date)
         series = {}
         for code, identity in self.funds.items():
-            if day(identity.known_at) > date:
+            if date < max(day(identity.inception), day(identity.known_at)):
                 continue
             fund = self.fund_at(code, date, date)
             if not fund.eligible(date):

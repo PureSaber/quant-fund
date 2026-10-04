@@ -62,7 +62,7 @@ def research_table(dataset: Dataset, date, frequency="ME", window=36):
     panel = dataset.returns(date, frequency, window)
     rows = []
     for code, identity in dataset.funds.items():
-        if day(identity.known_at) > date:
+        if date < max(day(identity.inception), day(identity.known_at)):
             continue
         fund = dataset.fund_at(code, date, date)
         quote = dataset.quote(code, date)

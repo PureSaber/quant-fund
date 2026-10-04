@@ -10,7 +10,7 @@ from quant_fund.data import Dataset, FundIdentity
 from quant_fund.engine import BacktestConfig, Ledger, Lot, run_backtest, validate_backtest_inputs
 from quant_fund.monitor import monitor
 from quant_fund.report import export_run, verify_run
-from quant_fund.research import allocate
+from quant_fund.research import allocate, research_table
 from quant_fund.terms import TERM_FIELDS, FundTermsTable
 
 
@@ -87,6 +87,33 @@ def test_future_unsupported_revision_does_not_block_earlier_backtest(make_datase
     dates = validate_backtest_inputs(data, BacktestConfig(start="2024-01-02", end="2024-01-10"))
     assert len(dates) == 7
     assert data.fund_at("F", "2024-01-05", "2024-01-05").version_id == "current"
+
+
+def test_identity_known_before_inception_does_not_enter_research_or_buy_early(make_dataset):
+    calendar = pd.bdate_range("2024-01-15", "2024-02-05")
+    data = make_dataset(calendar=calendar)
+    record = version(data, "initial", "v1", "2024-02-01", None, "2024-01-01")
+    data.funds = {
+        "F": FundIdentity(
+            fund_id="F",
+            name="测试基金",
+            inception="2024-02-01",
+            known_at="2024-01-01",
+        )
+    }
+    attach(data, [record])
+
+    assert data.returns("2024-01-31").empty
+    table, panel = research_table(data, "2024-01-31")
+    assert table.empty and panel.empty
+    ledger = Ledger(data, 1000)
+    ledger.advance(calendar[0])
+    with pytest.raises(ValueError, match="不在可申购范围"):
+        ledger.submit("F", "BUY", amount=1000)
+    for date in calendar[1 : calendar.get_loc("2024-02-01") + 1]:
+        ledger.advance(date)
+    order = ledger.submit("F", "BUY", amount=1000)
+    assert order.deal_date == pd.Timestamp("2024-02-02")
 
 
 def economic_versions(data):

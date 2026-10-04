@@ -114,11 +114,17 @@ class Ledger:
     def submit(self, code, side, *, amount=0.0, shares=0.0):
         if self.current_date is None:
             raise ValueError("必须先推进到决策日")
-        fund = self.dataset.fund_at(code, self.current_date, self.current_date)
         if side not in {"BUY", "SELL"}:
             raise ValueError("指令方向必须为BUY或SELL")
         if not np.isfinite([amount, shares]).all():
             raise ValueError("指令数量无效")
+        identity = self.dataset.funds[code]
+        if (
+            self.current_date < max(day(identity.inception), day(identity.known_at))
+            and side == "BUY"
+        ):
+            raise ValueError("当前日期基金不在可申购范围")
+        fund = self.dataset.fund_at(code, self.current_date, self.current_date)
         if not fund.eligible(self.current_date) and side == "BUY":
             raise ValueError("当前日期基金不在可申购范围")
         deal, order_terms = self.dealing_terms(code, self.current_date)
