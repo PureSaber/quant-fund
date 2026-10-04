@@ -452,6 +452,43 @@ def test_versioned_report_preserves_leading_zero_and_rejects_resigned_bad_bindin
         verify_run(output)
 
     orders = pd.read_csv(output / "orders.csv", dtype=str)
+    duplicate_orders = pd.concat([orders, orders.tail(1)], ignore_index=True)
+    duplicate_orders.to_csv(output / "orders.csv", index=False)
+    invalid = deepcopy(original_manifest)
+    invalid["files"]["orders.csv"] = hashlib.sha256(
+        (output / "orders.csv").read_bytes()
+    ).hexdigest()
+    manifest_path.write_text(json.dumps(invalid, ensure_ascii=False, indent=2), encoding="utf-8")
+    with pytest.raises(ValueError, match="order_id重复"):
+        verify_run(output)
+
+    collision = orders.iloc[[0]].copy()
+    collision.loc[:, "order_id"] = f"0{collision.iloc[0].order_id}"
+    collision_orders = pd.concat([orders, collision], ignore_index=True)
+    collision_orders.to_csv(output / "orders.csv", index=False)
+    invalid = deepcopy(original_manifest)
+    invalid["files"]["orders.csv"] = hashlib.sha256(
+        (output / "orders.csv").read_bytes()
+    ).hexdigest()
+    manifest_path.write_text(json.dumps(invalid, ensure_ascii=False, indent=2), encoding="utf-8")
+    with pytest.raises(ValueError, match="归一后冲突"):
+        verify_run(output)
+
+    for invalid_order_id in ("", "1.0", "0", "-1", "01"):
+        malformed = orders.copy()
+        malformed.loc[0, "order_id"] = invalid_order_id
+        malformed.to_csv(output / "orders.csv", index=False)
+        invalid = deepcopy(original_manifest)
+        invalid["files"]["orders.csv"] = hashlib.sha256(
+            (output / "orders.csv").read_bytes()
+        ).hexdigest()
+        manifest_path.write_text(
+            json.dumps(invalid, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="order_id"):
+            verify_run(output)
+
+    orders.to_csv(output / "orders.csv", index=False)
     orders.loc[0, "terms_version_id"] = "99999"
     orders.to_csv(output / "orders.csv", index=False)
     manifest = deepcopy(original_manifest)

@@ -286,6 +286,39 @@ def _boolean(value):
     return normalized == "true"
 
 
+def _parsed_order_id(value, source):
+    if value is None or pd.isna(value):
+        raise ValueError(f"{source}的order_id不能为空")
+    text = str(value)
+    if not text.isascii() or not text.isdecimal():
+        raise ValueError(f"{source}的order_id必须为十进制正整数")
+    normalized = int(text)
+    if normalized <= 0:
+        raise ValueError(f"{source}的order_id必须为十进制正整数")
+    return text, normalized
+
+
+def _canonical_order_id(value, source):
+    text, normalized = _parsed_order_id(value, source)
+    if text != str(normalized):
+        raise ValueError(f"{source}的order_id必须使用规范十进制形式")
+    return normalized
+
+
+def _unique_order_ids(values):
+    seen = {}
+    normalized_ids = []
+    for value in values:
+        text, normalized = _parsed_order_id(value, "订单")
+        if normalized in seen:
+            raise ValueError(f"订单order_id重复或归一后冲突：{seen[normalized]}与{text}")
+        if text != str(normalized):
+            raise ValueError("订单的order_id必须使用规范十进制形式")
+        seen[normalized] = text
+        normalized_ids.append(normalized)
+    return normalized_ids
+
+
 def _verify_term_bindings(root, dataset):
     """Re-select archived order terms and recompute fees from archived inputs."""
     from .engine import Ledger
@@ -344,6 +377,7 @@ def _verify_term_bindings(root, dataset):
     }
     if not required.issubset(orders):
         raise ValueError("订单缺少条款冻结证据")
+    order_ids = _unique_order_ids(orders.order_id)
     if (
         not orders.side.isin(["BUY", "SELL"]).all()
         or not orders.status.isin(["pending", "confirmed"]).all()
@@ -360,11 +394,14 @@ def _verify_term_bindings(root, dataset):
     }
     if not order_lots.empty and not order_lot_fields.issubset(order_lots):
         raise ValueError("赎回批次绑定缺少申购条款证据")
+    if not order_lots.empty:
+        for value in order_lots.order_id:
+            _canonical_order_id(value, "赎回批次绑定")
     if not evidence_fields.issubset(evidence):
         raise ValueError("研究产物缺少实际使用条款版本证据字段")
     calendar = Ledger(dataset)
     resolved_orders = {}
-    for order in orders.itertuples(index=False):
+    for order, order_id in zip(orders.itertuples(index=False), order_ids, strict=True):
         expected_deal, terms = calendar.dealing_terms(order.fund_id, order.submitted)
         if not _same_timestamp(order.deal_date, expected_deal):
             raise ValueError(f"订单{order.order_id}申请日不符合提交时可见的开放与预约条款")
@@ -388,7 +425,7 @@ def _verify_term_bindings(root, dataset):
             order.settle_date, settlement
         ):
             raise ValueError(f"订单{order.order_id}确认或到账日期与冻结条款不一致")
-        resolved_orders[int(order.order_id)] = (order, terms)
+        resolved_orders[order_id] = (order, terms)
         matching_evidence = evidence.loc[
             (evidence.fund_id == order.fund_id)
             & (evidence.version_id == order.terms_version_id)
@@ -421,7 +458,7 @@ def _verify_term_bindings(root, dataset):
     if not trades.empty and not trade_fields.issubset(trades):
         raise ValueError("成交记录缺少冻结条款或逐笔经济证据")
     for trade in trades.itertuples(index=False):
-        key = int(trade.order_id)
+        key = _canonical_order_id(trade.order_id, "成交")
         trade_counts[key] = trade_counts.get(key, 0) + 1
         if key not in resolved_orders:
             raise ValueError(f"成交{key}没有对应订单")
@@ -454,7 +491,7 @@ def _verify_term_bindings(root, dataset):
         else:
             if order_lots.empty:
                 raise ValueError(f"赎回订单{key}缺少份额批次绑定")
-            allocations = order_lots.loc[order_lots.order_id.astype(str) == str(key)]
+            allocations = order_lots.loc[order_lots.order_id == str(key)]
             if allocations.empty:
                 raise ValueError(f"赎回订单{key}缺少份额批次绑定")
             if not np.isclose(
@@ -472,7 +509,7 @@ def _verify_term_bindings(root, dataset):
                 ]
                 if buys.empty:
                     raise ValueError(f"赎回订单{key}引用的申购批次条款不存在")
-                buy_terms = resolved_orders[int(buys.iloc[0].order_id)][1]
+                buy_terms = resolved_orders[_canonical_order_id(buys.iloc[0].order_id, "订单")][1]
                 if (
                     int(item.lot_lock_days) != buy_terms.lock_days
                     or _boolean(item.historical_terms_pit) != bool(buy_terms.historical_pit)
@@ -519,7 +556,7 @@ def _verify_term_bindings(root, dataset):
             ]
             if matches.empty:
                 raise ValueError("份额批次缺少对应的申购条款版本")
-            terms = resolved_orders[int(matches.iloc[0].order_id)][1]
+            terms = resolved_orders[_canonical_order_id(matches.iloc[0].order_id, "订单")][1]
             if int(lot.lock_days) != terms.lock_days or _boolean(lot.historical_terms_pit) != bool(
                 terms.historical_pit
             ):
