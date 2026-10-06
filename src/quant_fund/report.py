@@ -235,6 +235,13 @@ def verify_run(directory):
         verified_bindings = _csv(root / "orders.csv").shape[0]
     else:
         raise ValueError(f"不支持的研究产物schema：{schema}")
+    from .reconciliation import verify_ledger_replay
+
+    replay = (
+        {**verify_ledger_replay(root, dataset, manifest["config"]), "ledger_replay": "pass"}
+        if schema == "quant-fund.research-run@2"
+        else {"ledger_replay": "not_available_legacy_schema"}
+    )
     nav = pd.read_csv(root / "nav.csv")
     difference = nav.total_value - nav[
         ["cash", "frozen_cash", "receivables", "holdings_value"]
@@ -246,6 +253,7 @@ def verify_run(directory):
         "max_reconciliation_error": float(difference.abs().max()),
         "terms_mode": dataset.terms_mode,
         "verified_term_bindings": verified_bindings,
+        **replay,
     }
 
 
