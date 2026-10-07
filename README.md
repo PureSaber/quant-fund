@@ -57,7 +57,7 @@ Linux使用`python3.12 -m venv .venv`创建环境，并将以上`.\.venv\Scripts
 |skfolio|RiskBudgeting、HierarchicalRiskParity|1.3.4|[官方仓库](https://github.com/skfolio/skfolio)|
 |OptimalPortfolios|带权重上限的风险预算优化器|7.8.0|[官方仓库](https://github.com/ArturSepp/OptimalPortfolios)|
 |qis/QuantInvestStrats|Euler波动风险贡献，并核对贡献合计|5.31.0|[官方仓库](https://github.com/ArturSepp/QuantInvestStrats)|
-|AKShare|可选公募净值快照采集；日增长率构建总收益序列|1.18.97|[官方仓库](https://github.com/akfamily/akshare)|
+|AKShare|可选公募净值快照采集；单位净值与显式现金分红构建再投资收益序列|1.18.97|[官方仓库](https://github.com/akfamily/akshare)|
 
 skfolio、OptimalPortfolios和qis已通过真实库调用测试。AKShare适配器已完成轻量真实净值采集、入库幂等和冲突回滚验证；首次采集历史按采集日获知，不据此声称历史FOF账本已获验证。HRP使用完整层次树做递归风险分配，显式保留全部叶节点，不运行与其权重无关的平面聚类数量选择；因此支持两只基金的小研究池，同时保留现金预算与权重上限检查。暂未引入Riskfolio-Lib、bt和xalpha，避免首版出现重复优化器、重复账本以及依赖冲突；后续可以新增适配器进行同口径比较。各依赖许可证以上游仓库为准，锁定版本不替代发布时的许可证清单。
 
@@ -90,7 +90,7 @@ skfolio、OptimalPortfolios和qis已通过真实库调用测试。AKShare适配�
 .\.venv\Scripts\python.exe -m quant_fund.cli fetch-public --code 000001 --out data/public/000001-snapshot.csv
 ```
 
-这会访问公共数据接口。首次采集的历史记录全部以采集日作为`known_at`；不能凭今天下载的历史数据生成过去已知的数据库。分红权益、基金条款和真实交易日历仍需单独提供。
+这会访问公共数据接口。首次采集的历史记录全部以采集日作为`known_at`；不能凭今天下载的历史数据生成过去已知的数据库。采集器从单位净值与显式每份现金分红计算除息日再投资收益，不把来源的“日增长率”当作已包含分红的收益。累计净值只核对区间现金分红总额，不作为复权序列。保留单位净值、累计净值、分红和拆分四份原始CSV；日期不齐、现金分项不一致或存在未支持的拆分时拒绝生成结果。该研究序列不替代真实分红公告获知日、登记日权益、基金条款和用途日历；这些资料仍须单独提供。
 
 ## 首版的适用边界
 
