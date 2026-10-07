@@ -43,6 +43,7 @@ class Order:
     terms_effective_to: pd.Timestamp | None = None
     historical_terms_pit: bool = False
     terms: object | None = field(default=None, repr=False)
+    request_id: str | None = None
 
 
 class Ledger:
@@ -111,7 +112,32 @@ class Ledger:
     def lot_is_unlocked(self, lot, deal_date):
         return (day(deal_date) - lot.bought).days >= self.lot_lock_days(lot)
 
-    def submit(self, code, side, *, amount=0.0, shares=0.0):
+    def submit(self, code, side, *, amount=0.0, shares=0.0, request_id=None):
+        """Reserve once for an explicit request; an omitted identity is a new order."""
+        if request_id is not None:
+            if (
+                not isinstance(request_id, str)
+                or not request_id
+                or request_id.strip() != request_id
+            ):
+                raise ValueError("请求标识必须为非空且无首尾空白的字符串")
+            for order in self.orders:
+                if order.request_id == request_id:
+                    if (code, side, amount, shares) != (
+                        order.fund_id,
+                        order.side,
+                        order.amount,
+                        order.shares,
+                    ):
+                        raise ValueError("同一请求标识不能对应不同申赎内容")
+                    return order
+        with self._account_transaction():
+            order = self._submit(code, side, amount=amount, shares=shares)
+            order.request_id = request_id
+            self.check()
+            return order
+
+    def _submit(self, code, side, *, amount=0.0, shares=0.0):
         if self.current_date is None:
             raise ValueError("必须先推进到决策日")
         if side not in {"BUY", "SELL"}:
@@ -192,7 +218,6 @@ class Ledger:
             terms=order_terms,
         )
         self.orders.append(order)
-        self.check()
         return order
 
     def _settle(self, date):
@@ -209,7 +234,7 @@ class Ledger:
         self.receivables = unpaid
 
     @contextmanager
-    def _advance_transaction(self):
+    def _account_transaction(self):
         balances = self.current_date, self.cash, self.frozen
         lots, orders = list(self.lots), list(self.orders)
         records = [(record, vars(record).copy()) for record in lots + orders]
@@ -246,7 +271,7 @@ class Ledger:
             expected = self.offset(self.current_date, 1)
             if date != expected:
                 raise ValueError("账本必须按交易日历逐日推进，不能跳过事件")
-        with self._advance_transaction():
+        with self._account_transaction():
             self._advance_day(date)
 
     def _advance_day(self, date):
@@ -427,6 +452,21 @@ class Ledger:
     def check(self):
         if not np.isfinite([self.cash, self.frozen]).all() or min(self.cash, self.frozen) < -1e-7:
             raise ValueError("现金账本异常")
+        reserved = {id(lot): 0.0 for lot in self.lots}
+        for order in self.orders:
+            if order.status != "pending" or order.side != "SELL":
+                continue
+            for lot, take in order.lots:
+                if (
+                    id(lot) not in reserved
+                    or lot.fund_id != order.fund_id
+                    or not np.isfinite(take)
+                    or take <= 0
+                ):
+                    raise ValueError("待确认赎回引用的份额批次异常")
+                reserved[id(lot)] += take
+            if not np.isclose(sum(take for _, take in order.lots), order.shares, rtol=0, atol=1e-8):
+                raise ValueError("待确认赎回数量与份额批次无法对账")
         for lot in self.lots:
             if (
                 not np.isfinite([lot.shares, lot.reserved]).all()
@@ -434,6 +474,11 @@ class Ledger:
                 or lot.shares < lot.reserved - 1e-8
             ):
                 raise ValueError("份额账本异常")
+            if not np.isclose(lot.reserved, reserved[id(lot)], rtol=0, atol=1e-8):
+                raise ValueError("冻结份额与待确认赎回无法对账")
+        for item in self.receivables:
+            if not np.isfinite(item["amount"]) or item["amount"] < 0:
+                raise ValueError("应收资金账本异常")
         pending_amount = sum(
             o.amount for o in self.orders if o.status == "pending" and o.side == "BUY"
         )
