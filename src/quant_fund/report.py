@@ -17,6 +17,49 @@ from .integration import platform_snapshot
 from .monitor import monitor
 from .research import performance
 
+_REPORT_COLUMN_LABELS = {
+    "fund_id": "基金代码",
+    "name": "基金名称",
+    "manager": "管理人",
+    "strategy": "策略分类",
+    "kind": "类型",
+    "shares": "份额数量",
+    "reserved_shares": "冻结份额",
+    "mark": "估值单位净值",
+    "value": "持仓估值",
+    "nav_date": "净值日期",
+    "stale_days": "估值滞后天数",
+    "terms_id": "条款ID",
+    "terms_version_id": "条款版本ID",
+    "terms_known_at": "条款获知日期",
+    "historical_terms_pit": "历史时点条款",
+    "weight": "持仓权重（比例）",
+    "severity": "提示级别",
+    "message": "提示内容",
+    "deal_date": "交易日期",
+    "arrival_date": "预计到账日期",
+    "estimated_amount": "预计金额",
+    "lot_terms_version_id": "批次条款版本ID",
+    "lot_lock_days": "批次锁定天数",
+    "basis": "估算依据",
+    "target_date": "目标日期",
+    "actual_weight": "实际权重（比例）",
+    "target_weight": "目标权重（比例）",
+    "gap_amount": "调仓差额",
+    "direction": "方向",
+    "next_open_date": "下一开放日期",
+    "unlocked_shares_at_next_open": "下一开放日可用份额",
+    "status": "状态",
+    "date": "日期",
+    "reason": "原因",
+    "periods": "历史期数",
+    "history_end": "历史截止日期",
+    "funds": "基金集合",
+    "method": "配置方法",
+    "term_versions": "条款版本",
+    "classification_basis": "分类依据",
+}
+
 
 def export_run(result, dataset, source_directory, output):
     root = Path(output)
@@ -103,7 +146,10 @@ def export_run(result, dataset, source_directory, output):
     label = html.escape(dataset.metadata.get("label", dataset.metadata["classification"]))
     notice = "合成数据仅验证软件。" if dataset.metadata["classification"] == "synthetic" else ""
     tables_html = "".join(
-        f"<h2>{html.escape(title)}</h2>{tables[key].to_html(index=False, escape=True)}"
+        f'<h2>{html.escape(title)}</h2><div class="table-scroll" role="region" '
+        f'tabindex="0" aria-label="{html.escape(title)}">'
+        + tables[key].rename(columns=_REPORT_COLUMN_LABELS).to_html(index=False, escape=True)
+        + "</div>"
         for key, title in [
             ("holdings", "期末持仓"),
             ("alerts", "监控提示"),
@@ -113,15 +159,22 @@ def export_run(result, dataset, source_directory, output):
         ]
     )
     document = f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>基金FOF研究报告</title><style>body{{max-width:1200px;margin:40px auto;padding:0 24px;
     font:15px/1.6 'Microsoft YaHei',sans-serif;color:#213547;background:#f7f9fb}}
     table{{border-collapse:collapse;background:white;width:100%;font-size:12px}}td,th{{padding:8px;
-    border:1px solid #dfe7ec;text-align:left}}h2{{margin-top:36px}}.tag{{color:#95610b}}
+    border:1px solid #dfe7ec;text-align:left;white-space:nowrap}}h2{{margin-top:36px}}
+    .tag{{color:#95610b}}.table-scroll{{max-width:100%;overflow-x:auto;border-radius:8px}}
+    .table-scroll:focus-visible{{outline:3px solid #087f8c;outline-offset:2px}}
+    thead{{background:#edf3f7}}tbody tr:nth-child(even){{background:#f7f9fb}}
+    pre{{white-space:pre-wrap;overflow-wrap:anywhere}}.js-plotly-plot{{max-width:100%}}
+    @media(max-width:600px){{body{{margin:20px auto;padding:0 16px}}h1{{font-size:26px}}}}
     </style><h1>基金FOF研究报告</h1><p class="tag">{label}
     · {html.escape(result["config"]["strategy"])}
     · {result["config"]["start"]}—{result["config"]["end"]}</p>
     <p>{notice}低频净值下的组合曲线使用已知估值，不能表示实际日内风险。</p>
-    {fig.to_html(full_html=False, include_plotlyjs=True)}{tables_html}
+    {fig.to_html(full_html=False, include_plotlyjs=True)}
+    <p>表格可横向滚动；显示值便于阅读，完整精度和原始字段见同目录CSV。</p>{tables_html}
     <h2>复现信息</h2>
     <pre>{html.escape(json.dumps(manifest, ensure_ascii=False, indent=2))}</pre></html>"""
     (root / "report.html").write_text(document, encoding="utf-8")
