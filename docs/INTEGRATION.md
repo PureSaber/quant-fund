@@ -94,3 +94,7 @@ payload = platform_snapshot(result, data)
 使用`quant-lab validate --run-dir <研究目录>`核验后，可扫描到独立实验索引，由Report Hub按索引位置重新验证产物并展示。索引是可重建缓存；来源损坏时应显示不可用，不能使用旧缓存指标。`research`视图中的汇总NAV不能承担完整QExec现金分录、订单和成交链路的精确归因。
 
 v2的`metrics.json`保留原报告的全部指标，并添加数据分类、估值口径和`backtest_stats`展示行。完整估值区间使用首末已知估值及完整路径回撤，年化与Sharpe留空；完整月末收益样本另行展示收益、月末回撤和按12期年化的指标，两行不能混合使用。陈旧估值可能低估风险；没有新增基金基准或将低频净值插值成日收益。`config.json`的`study_config`保留原回测配置。
+## 外部凭证对账补充
+
+`reconcile-observations`提供独立于平台快照的只读对账CLI，schema为`quant-fund.observation-reconciliation/v1`。完整输入、输出与限制见[外部凭证对账契约](OBSERVATION_RECONCILIATION.md)。该结果不提升standard/v2的investable、rankable或真实业务认证等级。
+
