@@ -186,3 +186,88 @@ def test_cli_exit_code_reports_difference(modeled_run, observations, monkeypatch
         main()
     assert exc.value.code == 2
     assert json.loads(capsys.readouterr().out)["status"] == "differences"
+
+
+def batch_inputs(observations):
+    from quant_fund.batches import BATCH_CONFIRMATION_COLUMNS, BATCH_RECEIPT_COLUMNS
+
+    confirmations, receipts, cpath, rpath = observations
+    split_confirmations, split_receipts = [], []
+    for row in confirmations:
+        for i in range(2):
+            split_confirmations.append(
+                {
+                    **row,
+                    "evidence_id": f"{row['evidence_id']}-{i}",
+                    "shares": str(Decimal(row["shares"]) / 2),
+                    "gross": str(Decimal(row["gross"]) / 2),
+                    "fee": str(Decimal(row["fee"]) / 2),
+                    "final": "true" if i else "false",
+                }
+            )
+    for row in receipts:
+        parent = next(c for c in confirmations if c["order_id"] == row["order_id"])
+        for i in range(2):
+            for j in range(2):
+                split_receipts.append(
+                    {
+                        **row,
+                        "evidence_id": f"{row['evidence_id']}-{i}-{j}",
+                        "confirmation_id": f"{parent['evidence_id']}-{i}",
+                        "amount": str(Decimal(row["amount"]) / 4),
+                    }
+                )
+    write_csv(cpath, BATCH_CONFIRMATION_COLUMNS, split_confirmations)
+    write_csv(rpath, BATCH_RECEIPT_COLUMNS, split_receipts)
+    return split_confirmations, split_receipts, cpath, rpath
+
+
+def test_batched_confirmations_and_payments_reconcile_without_booking(modeled_run, observations):
+    from quant_fund.batches import reconcile_batches
+
+    _, receipts, cpath, rpath = batch_inputs(observations)
+    before = (modeled_run / "nav.csv").read_bytes()
+    report = reconcile_batches(modeled_run, cpath, rpath)
+    assert report["status"] == "matched"
+    assert report["cash_receipts"] == len(receipts)
+    assert all(row["status"] == "paid" for row in report["cash_by_confirmation"])
+    assert not report["real_business_certified"]
+    assert (modeled_run / "nav.csv").read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "change", ["unpaid", "overpaid", "open", "unknown_parent", "future", "duplicate"]
+)
+def test_partial_and_invalid_observations_never_become_complete(modeled_run, observations, change):
+    from quant_fund.batches import (
+        BATCH_CONFIRMATION_COLUMNS,
+        BATCH_RECEIPT_COLUMNS,
+        reconcile_batches,
+    )
+
+    confirmations, receipts, cpath, rpath = batch_inputs(observations)
+    if change == "unpaid":
+        receipts.pop()
+    elif change == "overpaid":
+        receipts[0]["amount"] = str(Decimal(receipts[0]["amount"]) + 1)
+    elif change == "open":
+        for row in confirmations:
+            row["final"] = "false"
+    elif change == "unknown_parent":
+        receipts[0]["confirmation_id"] = "unknown"
+    elif change == "future":
+        receipts[0]["received"] = "2027-01-01"
+    else:
+        receipts.append(receipts[0])
+    write_csv(cpath, BATCH_CONFIRMATION_COLUMNS, confirmations)
+    write_csv(rpath, BATCH_RECEIPT_COLUMNS, receipts)
+    if change in {"unknown_parent", "future", "duplicate"}:
+        with pytest.raises(ValueError):
+            reconcile_batches(modeled_run, cpath, rpath)
+    else:
+        report = reconcile_batches(modeled_run, cpath, rpath)
+        if change == "open":
+            assert report["status"] == "pending" and report["orders_awaiting_final_confirmation"]
+        else:
+            assert report["status"] == "differences"
+            assert any(row["status"] == change for row in report["cash_by_confirmation"])

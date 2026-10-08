@@ -13,6 +13,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from quant_lab.research_v2 import clean_git_commit, write_exploratory_run_v2
 
+from .dealing import redemption, subscription
 from .integration import platform_snapshot
 from .monitor import monitor
 from .research import performance
@@ -545,10 +546,12 @@ def _verify_term_bindings(root, dataset):
         ):
             raise ValueError(f"成交{key}未使用确认时已知的确切申请日净值")
         if order.side == "BUY":
-            net = float(order.amount) / (1 + terms.buy_fee)
-            expected_fee = float(order.amount) - net
-            expected_shares = net / float(trade.unit_nav)
-            expected_gross = float(order.amount)
+            economics = subscription(terms, float(order.amount), float(trade.unit_nav))
+            expected_fee, expected_shares, expected_gross = (
+                economics["fee"],
+                economics["shares"],
+                economics["gross"],
+            )
         else:
             if order_lots.empty:
                 raise ValueError(f"赎回订单{key}缺少份额批次绑定")
@@ -578,14 +581,30 @@ def _verify_term_bindings(root, dataset):
                     < buy_terms.lock_days
                 ):
                     raise ValueError(f"赎回订单{key}违反申购批次冻结的锁定期")
-            expected_fee = sum(
-                float(item.shares)
-                * float(trade.unit_nav)
-                * terms.sell_rate((_timestamp(order.deal_date) - _timestamp(item.lot_bought)).days)
-                for item in allocations.itertuples(index=False)
+            economics = redemption(
+                terms,
+                float(order.shares),
+                float(trade.unit_nav),
+                [
+                    (
+                        float(item.shares),
+                        (_timestamp(order.deal_date) - _timestamp(item.lot_bought)).days,
+                    )
+                    for item in allocations.itertuples(index=False)
+                ],
             )
-            expected_shares = float(order.shares)
-            expected_gross = expected_shares * float(trade.unit_nav)
+            expected_fee, expected_shares, expected_gross = (
+                economics["fee"],
+                economics["shares"],
+                economics["gross"],
+            )
+        if "rounding_residual" in economics and (
+            "rounding_residual" not in trades
+            or not np.isclose(
+                float(trade.rounding_residual), economics["rounding_residual"], atol=1e-8, rtol=0
+            )
+        ):
+            raise ValueError(f"成交{key}舍入尾差与冻结条款不一致")
         if (
             not np.isclose(float(trade.fee), expected_fee, atol=1e-6, rtol=0)
             or not np.isclose(float(trade.shares), expected_shares, atol=1e-8, rtol=0)

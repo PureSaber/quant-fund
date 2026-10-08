@@ -86,6 +86,8 @@ skfolio、OptimalPortfolios和qis已通过真实库调用测试。AKShare适配�
 
 外部确认单与赎回到账流水可使用`reconcile-observations`只读对账，输入列、退出码和真实性边界见[外部凭证对账契约](docs/OBSERVATION_RECONCILIATION.md)。
 
+显式费率档位、固定申购费、金额/份额舍入和尾差可通过历史版本的`execution_policy`配置；`reconcile-batches`支持分批确认与分次实收的只读核对，见[执行规则及批次对账](docs/EXECUTION_POLICY.md)。
+
 可选公募采集：
 
 ```powershell

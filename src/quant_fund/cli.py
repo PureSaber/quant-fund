@@ -49,6 +49,10 @@ def main():
     reconcile.add_argument("--run", required=True)
     reconcile.add_argument("--confirmations", required=True)
     reconcile.add_argument("--receipts", required=True)
+    batches = commands.add_parser("reconcile-batches", help="只读核对分批确认和分次到账")
+    batches.add_argument("--run", required=True)
+    batches.add_argument("--confirmations", required=True)
+    batches.add_argument("--receipts", required=True)
     fetch = commands.add_parser("fetch-public")
     fetch.add_argument("--code", required=True)
     fetch.add_argument("--out", required=True)
@@ -81,6 +85,13 @@ def main():
         print(f"已导出{len(frame)}条历史版本")
     elif args.command == "verify-run":
         print(json.dumps(verify_run(args.directory), ensure_ascii=False))
+    elif args.command == "reconcile-batches":
+        from .batches import reconcile_batches
+
+        result = reconcile_batches(args.run, args.confirmations, args.receipts)
+        print(json.dumps(result, ensure_ascii=False, allow_nan=False))
+        if result["status"] != "matched":
+            raise SystemExit(2)
     elif args.command == "reconcile-observations":
         from .observations import reconcile_observations
 

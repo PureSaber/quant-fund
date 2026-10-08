@@ -41,8 +41,18 @@ class Fund:
     min_buy: float = 0.0
     max_stale_days: int = 10
     nav_fee_basis: str = "net_all_fund_fees"
+    execution_policy: object | None = None
 
     def __post_init__(self):
+        from .dealing import ExecutionPolicy
+
+        if self.execution_policy is not None:
+            policy = self.execution_policy
+            if isinstance(policy, dict):
+                policy = ExecutionPolicy(**policy)
+            if not isinstance(policy, ExecutionPolicy) or self.buy_fee != 0:
+                raise ValueError("Explicit execution policy requires buy_fee=0 and a valid policy")
+            object.__setattr__(self, "execution_policy", policy)
         if not self.fund_id or not self.name or not self.manager or not self.strategy:
             raise ValueError("基金代码、名称、管理人和策略分类不能为空")
         if self.kind not in {"public", "private", "etf"}:
