@@ -84,6 +84,8 @@ skfolio、OptimalPortfolios和qis已通过真实库调用测试。AKShare适配�
 
 所有研究导出路径必须是新路径。`verify-run`检查已列文件的SHA-256、输入数据摘要和每日资金对账，不是数字签名，也不能证明金融模型正确。历史运行目录中的`code/src/quant_fund`、`code/pyproject.toml`和`code/requirements.lock`可在独立环境安装后重跑。精确复现还依赖同一Python/依赖版本和求解器环境。
 
+外部确认单与赎回到账流水可使用`reconcile-observations`只读对账，输入列、退出码和真实性边界见[外部凭证对账契约](docs/OBSERVATION_RECONCILIATION.md)。
+
 可选公募采集：
 
 ```powershell
