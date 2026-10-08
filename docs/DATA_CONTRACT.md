@@ -91,3 +91,6 @@
 ## 分用途日历与披露持仓扩展
 
 真实分类必须提供 calendars.json（PurposeCalendar 数组）及 calendar_ids（dealing/confirmation/banking 到 id 的映射）；缺少覆盖失败，不回退工作日。可选 holdings.csv 使用 QDK financial.holdings.COLUMNS，披露权重按 available_at 过滤；未知部分保留 UNKNOWN。平台快照新增 lookthrough 字段。完整字段和调用边界见 [FINANCIAL_FOUNDATIONS.md](FINANCIAL_FOUNDATIONS.md)。
+## 显式执行精度与费率扩展
+
+基金主表与历史条款版本增加可选 `execution_policy`，默认 null 保持旧口径。完整字段、费率档位、舍入顺序、尾差及版本冻结语义见[执行规则](EXECUTION_POLICY.md)。启用时成交CSV增加 `rounding_residual`；归档输入和本仓原生验证器共同校验，不能用旧验证器认证新策略。

@@ -58,7 +58,7 @@ def _order_id(value):
     return str(int(value))
 
 
-def _read(path, columns):
+def _read(path, columns, *, batched=False):
     raw = Path(path).read_bytes()
     reader = csv.DictReader(StringIO(raw.decode("utf-8-sig")))
     if reader.fieldnames is None or len(set(reader.fieldnames)) != len(reader.fieldnames):
@@ -70,12 +70,13 @@ def _read(path, columns):
         if None in row or any(not isinstance(v, str) or not v.strip() for v in row.values()):
             raise ValueError("Observation CSV contains empty or malformed fields")
         row = {key: value.strip() for key, value in row.items()}
-        key = _order_id(row["order_id"])
+        order_key = _order_id(row["order_id"])
+        key = row["evidence_id"] if batched else order_key
         if key in ids or row["evidence_id"] in evidence:
             raise ValueError("Duplicate order or evidence identity in observations")
         ids.add(key)
         evidence.add(row["evidence_id"])
-        row["order_id"] = key
+        row["order_id"] = order_key
         if row["currency"] != "CNY":
             raise ValueError("Only explicit CNY observations are supported")
         for field in set(row).intersection(TOLERANCES):
@@ -152,6 +153,8 @@ def reconcile_observations(directory, confirmations, receipts):
     ]
     before = {str(p.resolve()): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
     verified = verify_run(root)
+    if verified.get("ledger_replay") != "pass":
+        raise ValueError("Observation reconciliation requires a replay-verifiable run")
     dataset = Dataset.load(root / "inputs")
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     actual, confirmation_hash = _read(confirmations, CONFIRMATION_COLUMNS)

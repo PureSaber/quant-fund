@@ -23,6 +23,7 @@ TERM_FIELDS = (
     "min_buy",
     "max_stale_days",
     "nav_fee_basis",
+    "execution_policy",
 )
 
 
@@ -54,7 +55,7 @@ class FundTermsVersion:
             "known_at",
             *TERM_FIELDS,
         }
-        missing = required - set(item)
+        missing = required - {"execution_policy"} - set(item)
         if missing:
             raise ValueError(f"历史条款版本缺少字段：{sorted(missing)}")
         extra = set(item) - required
@@ -77,7 +78,7 @@ class FundTermsVersion:
         if effective_to is not None and effective_to <= effective_from:
             raise ValueError("历史条款effective_to必须晚于effective_from")
         known_at = _day(item["known_at"])
-        values = {name: item[name] for name in TERM_FIELDS}
+        values = {name: item.get(name) for name in TERM_FIELDS}
         values["sell_tiers"] = tuple(tuple(tier) for tier in values["sell_tiers"])
         values["open_dates"] = tuple(values["open_dates"])
 
@@ -85,13 +86,14 @@ class FundTermsVersion:
         from .data import Fund
 
         base = funds[fund_id]
-        Fund(
+        validated = Fund(
             fund_id=fund_id,
             name=base.name,
             inception=base.inception,
             known_at=base.known_at,
             **values,
         )
+        values["execution_policy"] = validated.execution_policy
         return cls(
             fund_id,
             terms_id,

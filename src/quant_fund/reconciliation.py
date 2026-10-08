@@ -18,7 +18,15 @@ NUMERIC_COLUMNS = {
         "pending_orders",
     },
     "orders": {"order_id", "amount", "shares"},
-    "trades": {"order_id", "unit_nav", "shares", "gross", "fee", "lot_lock_days"},
+    "trades": {
+        "order_id",
+        "unit_nav",
+        "shares",
+        "gross",
+        "fee",
+        "lot_lock_days",
+        "rounding_residual",
+    },
     "lots": {"shares", "reserved", "lock_days"},
     "order_lots": {"order_id", "shares", "lot_lock_days"},
 }

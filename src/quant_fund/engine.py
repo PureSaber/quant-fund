@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .data import Dataset, day
+from .dealing import redemption, subscription
 from .research import STRATEGIES, allocate
 
 
@@ -173,6 +174,10 @@ class Ledger:
         if settlement is not None and confirmation is not None and settlement < confirmation:
             raise ValueError("资金到账日不能早于份额确认日")
         reserved = []
+        if order_terms.execution_policy is not None:
+            order_terms.execution_policy.validate_request(
+                amount if side == "BUY" else shares, shares=side == "SELL"
+            )
         if side == "BUY":
             if (
                 amount <= 0
@@ -292,9 +297,8 @@ class Ledger:
             if fund is None:
                 raise ValueError("订单缺少提交时冻结的条款版本")
             if order.side == "BUY":
-                net = order.amount / (1 + fund.buy_fee)
-                fee = order.amount - net
-                shares = net / nav
+                economics = subscription(fund, order.amount, nav)
+                shares, fee = economics["shares"], economics["fee"]
                 self.frozen -= order.amount
                 self.lots.append(
                     Lot(
@@ -309,11 +313,13 @@ class Ledger:
                 gross = order.amount
             else:
                 shares = order.shares
-                fee = sum(
-                    take * nav * fund.sell_rate((order.deal_date - lot.bought).days)
-                    for lot, take in order.lots
+                economics = redemption(
+                    fund,
+                    shares,
+                    nav,
+                    [(take, (order.deal_date - lot.bought).days) for lot, take in order.lots],
                 )
-                gross = shares * nav
+                fee, gross = economics["fee"], economics["gross"]
                 for lot, take in order.lots:
                     lot.shares -= take
                     lot.reserved -= take
@@ -346,6 +352,11 @@ class Ledger:
                     "terms_effective_to": order.terms_effective_to,
                     "historical_terms_pit": order.historical_terms_pit,
                     "lot_lock_days": fund.lock_days if order.side == "BUY" else None,
+                    **(
+                        {"rounding_residual": economics["rounding_residual"]}
+                        if "rounding_residual" in economics
+                        else {}
+                    ),
                 }
             )
         self._dividends(date)
@@ -619,7 +630,7 @@ def run_backtest(dataset: Dataset, config: BacktestConfig):
             delta = target - actual
             if delta < -config.min_trade:
                 try:
-                    next_deal = ledger.dealing_date(code, date)
+                    next_deal, sell_terms = ledger.dealing_terms(code, date)
                     if next_deal is None:
                         raise ValueError("日历范围内没有赎回开放日")
                     available = sum(
@@ -628,6 +639,10 @@ def run_backtest(dataset: Dataset, config: BacktestConfig):
                         if lot.fund_id == code and ledger.lot_is_unlocked(lot, next_deal)
                     )
                     quantity = min(-delta / current.loc[code, "mark"], available)
+                    if sell_terms.execution_policy is not None:
+                        quantity = float(
+                            sell_terms.execution_policy.quantize(quantity, shares=True, down=True)
+                        )
                     if quantity <= 1e-10:
                         raise ValueError("持仓仍处于锁定期")
                     ledger.submit(code, "SELL", shares=quantity)
@@ -639,16 +654,18 @@ def run_backtest(dataset: Dataset, config: BacktestConfig):
                     if next_deal is None:
                         raise ValueError("日历范围内没有申购开放日")
                     if delta >= max(config.min_trade, buy_terms.min_buy):
-                        buys[code] = (delta, buy_terms.min_buy)
+                        buys[code] = (delta, buy_terms)
                 except ValueError as error:
                     events.append({"date": date, "fund_id": code, "reason": str(error)})
         # Do not spend anticipated sale proceeds. Scale buys against already available cash.
         spendable = max(0, ledger.cash - config.cash_buffer * snapshot["total_value"])
         requested = sum(amount for amount, _ in buys.values())
         scale = min(1, spendable / requested) if buys else 0
-        for code, (amount, min_buy) in buys.items():
+        for code, (amount, buy_terms) in buys.items():
             amount *= scale
-            if amount < max(config.min_trade, min_buy):
+            if buy_terms.execution_policy is not None:
+                amount = float(buy_terms.execution_policy.quantize(amount, down=True))
+            if amount < max(config.min_trade, buy_terms.min_buy):
                 continue
             try:
                 ledger.submit(code, "BUY", amount=amount)
