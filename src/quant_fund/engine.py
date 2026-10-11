@@ -10,6 +10,7 @@ import pandas as pd
 
 from .data import Dataset, day
 from .dealing import redemption, subscription
+from .economics import FOFEconomics, FOFPolicy
 from .research import STRATEGIES, allocate
 
 
@@ -48,7 +49,7 @@ class Order:
 
 
 class Ledger:
-    def __init__(self, dataset: Dataset, initial_cash=1_000_000.0):
+    def __init__(self, dataset: Dataset, initial_cash=1_000_000.0, *, fof_policy=None):
         if not np.isfinite(initial_cash) or initial_cash <= 0:
             raise ValueError("初始资金必须为有限正数")
         if not dataset.historical_terms and any(
@@ -59,6 +60,8 @@ class Ledger:
         if not dataset.historical_terms and any(f.kind == "etf" for f in dataset.funds.values()):
             raise ValueError("ETF可用于收益研究；交易回测需另接交易价格、分红和成交成本模型")
         self.initial_cash = initial_cash
+        policy = FOFPolicy(**(fof_policy or {}))
+        self.economics = FOFEconomics(policy, float(initial_cash))
         self.cash = initial_cash
         self.frozen = 0.0
         self.receivables = []
@@ -182,7 +185,7 @@ class Ledger:
             if (
                 amount <= 0
                 or amount < order_terms.min_buy
-                or amount > self.cash + 1e-8
+                or amount > self.available_cash + 1e-8
                 or shares != 0
             ):
                 raise ValueError("申购金额、最低申购额或可用资金不满足要求")
@@ -241,6 +244,13 @@ class Ledger:
     @contextmanager
     def _account_transaction(self):
         balances = self.current_date, self.cash, self.frozen
+        economics = self.economics
+        fee_state = (
+            economics.high_water_mark,
+            economics.fixed_payable,
+            economics.performance_reserve,
+        )
+        fee_count = len(economics.records)
         lots, orders = list(self.lots), list(self.orders)
         records = [(record, vars(record).copy()) for record in lots + orders]
         receivables = self.receivables
@@ -253,6 +263,10 @@ class Ledger:
             yield
         except BaseException:
             self.current_date, self.cash, self.frozen = balances
+            (economics.high_water_mark, economics.fixed_payable, economics.performance_reserve) = (
+                fee_state
+            )
+            del economics.records[fee_count:]
             # Restore records in place: submitted orders retain references to
             # their reserved lots, and callers may hold either object.
             for record, values in records:
@@ -280,6 +294,11 @@ class Ledger:
             self._advance_day(date)
 
     def _advance_day(self, date):
+        previous = (
+            self.snapshot()
+            if self.economics.policy.enabled and self.current_date is not None
+            else None
+        )
         self.current_date = date
         self._settle(date)
         for order in self.orders:
@@ -362,6 +381,9 @@ class Ledger:
         self._dividends(date)
         # Covers same-day arrival and NAV that was disclosed after its expected settlement date.
         self._settle(date)
+        if self.economics.policy.enabled:
+            gross_assets = self.snapshot()["total_value"] + self.economics.liability
+            self.cash = self.economics.close(date, previous, gross_assets, self.cash)
         self.check()
         self.history.append(self.snapshot())
 
@@ -444,11 +466,16 @@ class Ledger:
             )
         return pd.DataFrame(rows)
 
+    @property
+    def available_cash(self):
+        return max(0.0, self.cash - self.economics.liability)
+
     def snapshot(self):
         holdings = self.holdings()
         value = holdings.value.sum() if not holdings.empty else 0.0
         transit = sum(item["amount"] for item in self.receivables)
-        total = self.cash + self.frozen + transit + value
+        gross = self.cash + self.frozen + transit + value
+        total = gross - self.economics.liability
         return {
             "date": self.current_date,
             "cash": self.cash,
@@ -458,6 +485,16 @@ class Ledger:
             "total_value": total,
             "nav": total / self.initial_cash,
             "pending_orders": sum(o.status == "pending" for o in self.orders),
+            **(
+                {
+                    "gross_assets": gross,
+                    "fof_fee_liability": self.economics.liability,
+                    "available_cash": self.available_cash,
+                    "high_water_mark": self.economics.high_water_mark,
+                }
+                if self.economics.policy.enabled
+                else {}
+            ),
         }
 
     def check(self):
@@ -537,8 +574,12 @@ class BacktestConfig:
     max_weight: float = 0.4
     cash_buffer: float = 0.05
     min_trade: float = 1000.0
+    fof_policy: dict = field(default_factory=dict)
 
     def __post_init__(self):
+        if not isinstance(self.fof_policy, dict):
+            raise ValueError("fof_policy must be an object")
+        FOFPolicy(**self.fof_policy)
         if self.strategy not in STRATEGIES:
             raise ValueError("未知配置方法")
         if not np.isfinite(self.initial_cash) or self.initial_cash <= 0:
@@ -563,6 +604,7 @@ def validate_backtest_inputs(dataset: Dataset, config: BacktestConfig):
     ]
     if len(dates) < 2:
         raise ValueError("回测区间至少需要两个交易日")
+    FOFPolicy(**config.fof_policy).validate_calendar(dates)
     if dataset.historical_terms:
         for code, identity in dataset.funds.items():
             for date in dates:
@@ -583,7 +625,7 @@ def validate_backtest_inputs(dataset: Dataset, config: BacktestConfig):
 
 def run_backtest(dataset: Dataset, config: BacktestConfig):
     dates = validate_backtest_inputs(dataset, config)
-    ledger = Ledger(dataset, config.initial_cash)
+    ledger = Ledger(dataset, config.initial_cash, fof_policy=config.fof_policy)
     # First session of each month: selection uses information known at that close.
     dealing_days = dates.intersection(dataset.calendar)
     month = dealing_days.to_period("M")
@@ -658,7 +700,7 @@ def run_backtest(dataset: Dataset, config: BacktestConfig):
                 except ValueError as error:
                     events.append({"date": date, "fund_id": code, "reason": str(error)})
         # Do not spend anticipated sale proceeds. Scale buys against already available cash.
-        spendable = max(0, ledger.cash - config.cash_buffer * snapshot["total_value"])
+        spendable = max(0, ledger.available_cash - config.cash_buffer * snapshot["total_value"])
         requested = sum(amount for amount, _ in buys.values())
         scale = min(1, spendable / requested) if buys else 0
         for code, (amount, buy_terms) in buys.items():
@@ -711,5 +753,6 @@ def run_backtest(dataset: Dataset, config: BacktestConfig):
         "targets": pd.DataFrame(targets),
         "events": pd.DataFrame(events),
         "term_versions": pd.DataFrame(term_versions),
+        "fof_economics": ledger.economics.frame(),
         "config": asdict(config),
     }

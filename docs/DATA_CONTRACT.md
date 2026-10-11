@@ -93,4 +93,8 @@
 真实分类必须提供 calendars.json（PurposeCalendar 数组）及 calendar_ids（dealing/confirmation/banking 到 id 的映射）；缺少覆盖失败，不回退工作日。可选 holdings.csv 使用 QDK financial.holdings.COLUMNS，披露权重按 available_at 过滤；未知部分保留 UNKNOWN。平台快照新增 lookthrough 字段。完整字段和调用边界见 [FINANCIAL_FOUNDATIONS.md](FINANCIAL_FOUNDATIONS.md)。
 ## 显式执行精度与费率扩展
 
+### 可选外层 FOF 经济政策
+
+`BacktestConfig.fof_policy` 增加可选外层费用模型，完整字段与口径见 [FOF_ECONOMICS.md](FOF_ECONOMICS.md)。启用后 NAV 增加 `gross_assets/fof_fee_liability/available_cash/high_water_mark`，`total_value` 为资产减费用负债后的净资产。`fof_economics.csv` 逐期记录计提、转回、结晶、支付和余额；平台快照增加同名列表。旧默认结果不增加这些字段。只有支持该政策的本仓新版本验证器能重放新产物。
+
 基金主表与历史条款版本增加可选 `execution_policy`，默认 null 保持旧口径。完整字段、费率档位、舍入顺序、尾差及版本冻结语义见[执行规则](EXECUTION_POLICY.md)。启用时成交CSV增加 `rounding_residual`；归档输入和本仓原生验证器共同校验，不能用旧验证器认证新策略。
