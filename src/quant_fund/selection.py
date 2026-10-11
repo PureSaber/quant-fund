@@ -30,6 +30,40 @@ def factor_asof(observations, at):
     return frame.pivot(index="period_end", columns="factor", values="value").sort_index()
 
 
+def _native_oos_intervals(decision, evaluation, frequency):
+    """Full native buckets (previous endpoint, endpoint], with no partial returns.
+
+    Boundaries are the ME/W-FRI labels used by Dataset.returns. An endpoint decision
+    is the closing boundary of training and may start the next full return interval.
+    A decision inside a bucket excludes that bucket, even if its endpoint is later.
+    """
+    if frequency not in {"ME", "W-FRI"}:
+        raise ValueError("native research frequency must be ME or W-FRI")
+    offset = pd.tseries.frequencies.to_offset(frequency)
+    ends = pd.date_range(decision, evaluation, freq=frequency)
+    ends = ends[ends > decision]
+    starts = pd.DatetimeIndex([end - offset for end in ends])
+    included = starts >= decision
+    rejected = [
+        {
+            "period_start": str(start.date()),
+            "period_end": str(end.date()),
+            "reason": "native_return_interval_crosses_decision",
+        }
+        for start, end in zip(starts[~included], ends[~included], strict=True)
+    ]
+    intervals = pd.DataFrame({"period_start": starts[included]}, index=ends[included])
+    intervals.index.name = "period_end"
+    return intervals, {
+        "period_boundary_policy": "(previous_native_endpoint, native_endpoint]; "
+        "period_start >= decision; no partial-period interpolation",
+        "candidate_periods": len(ends),
+        "expected_periods": int(included.sum()),
+        "excluded_periods": len(rejected),
+        "excluded_intervals": rejected,
+    }
+
+
 def style_oos(dataset, fund_id, factors, *, decision, evaluation, frequency="ME", window=24):
     """Freeze existing OLS at decision; expose every missing OOS fund/factor return."""
     decision, evaluation = day(decision), day(evaluation)
@@ -46,10 +80,8 @@ def style_oos(dataset, fund_id, factors, *, decision, evaluation, frequency="ME"
     if joined.empty:
         raise ValueError("no contiguous fund/factor training interval")
     model = style_regression(joined.fund, joined.drop(columns="fund"), window=window)
-    index = pd.date_range(decision, evaluation, freq=frequency)
-    index = index[index > decision]
-    if not len(index):
-        raise ValueError("no completed evaluation period")
+    intervals, interval_audit = _native_oos_intervals(decision, evaluation, frequency)
+    index = intervals.index
     future = dataset.returns(evaluation, frequency, len(index) + 2).reindex(index)
     factor_test = factor_asof(factors, evaluation).reindex(
         index=index, columns=list(model["exposures"])
@@ -62,15 +94,18 @@ def style_oos(dataset, fund_id, factors, *, decision, evaluation, frequency="ME"
     result = pd.DataFrame({"fund_return": fund_test, "style_expected": prediction})
     result["residual"] = result.fund_return - result.style_expected
     result["complete"] = result.notna().all(axis=1)
+    result["period_start"] = intervals.period_start
     return result, {
+        "status": "evaluated" if len(index) else "no_complete_oos_periods",
         "decision": str(decision.date()),
         "evaluation": str(evaluation.date()),
         "frequency": frequency,
         "frozen_model": model,
         "training_start": str(joined.index[0].date()),
         "training_end": str(joined.index[-1].date()),
-        "expected_periods": len(index),
+        **interval_audit,
         "complete_periods": int(result.complete.sum()),
+        "missing_periods": int((~result.complete).sum()),
         "evidence_kind": dataset.metadata.get("classification", "unclassified"),
         "limits": "Return exposures, not holdings. Evaluation uses versions known at evaluation. "
         "No interpolation, fee model or evidence of manager skill.",
@@ -87,10 +122,8 @@ def persistence(dataset, *, decision, evaluation, frequency="ME", window=24, min
     if decision >= evaluation or type(min_periods) is not int or min_periods < 3:
         raise ValueError("later evaluation and at least three training periods required")
     training = dataset.returns(decision, frequency, window)
-    index = pd.date_range(decision, evaluation, freq=frequency)
-    index = index[index > decision]
-    if not len(index):
-        raise ValueError("no completed evaluation periods")
+    intervals, interval_audit = _native_oos_intervals(decision, evaluation, frequency)
+    index = intervals.index
     future = dataset.returns(evaluation, frequency, len(index) + 2).reindex(index)
     rows = []
     for code in training:
@@ -99,7 +132,7 @@ def persistence(dataset, *, decision, evaluation, frequency="ME", window=24, min
             continue
         fund = dataset.fund_at(code, decision, decision)
         later = future[code] if code in future else pd.Series(np.nan, index=index)
-        complete = bool(later.notna().all())
+        complete = bool(len(index) and later.notna().all())
         rows.append(
             {
                 "fund_id": code,
@@ -112,13 +145,21 @@ def persistence(dataset, *, decision, evaluation, frequency="ME", window=24, min
                 "training_return": float((1 + series).prod() - 1),
                 "test_return": float((1 + later).prod() - 1) if complete else np.nan,
                 "test_complete": complete,
+                "expected_test_periods": len(index),
+                "complete_test_periods": int(later.notna().sum()),
                 "missing_test_periods": int(later.isna().sum()),
+                "test_start": intervals.period_start.iloc[0] if len(index) else pd.NaT,
+                "test_end": index[-1] if len(index) else pd.NaT,
                 "terms_version_id": fund.version_id,
             }
         )
     result = pd.DataFrame(rows)
     if result.empty:
-        return result, {"status": "insufficient_training", "rank_correlation": None}
+        return result, {
+            "status": "insufficient_training",
+            "rank_correlation": None,
+            **interval_audit,
+        }
     # Deterministic class representative chosen without looking at later performance.
     result = result.sort_values("fund_id").drop_duplicates("share_group").reset_index(drop=True)
     keys = ["kind", "strategy", "training_start", "training_end"]
@@ -132,9 +173,11 @@ def persistence(dataset, *, decision, evaluation, frequency="ME", window=24, min
     x, y = result.loc[valid, "training_rank"], result.loc[valid, "test_rank"]
     correlation = float(x.corr(y)) if len(x) >= 3 and x.nunique() > 1 and y.nunique() > 1 else None
     return result, {
+        "status": "evaluated" if len(index) else "no_complete_oos_periods",
         "decision": str(decision.date()),
         "evaluation": str(evaluation.date()),
         "frequency": frequency,
+        **interval_audit,
         "cohort_size": len(result),
         "incomplete_funds": int((~result.test_complete).sum()),
         "rank_correlation": correlation,

@@ -41,7 +41,9 @@ def test_native_frequency_style_and_frozen_training(demo_directory):
     path, info = style_oos(
         data, "PUB_EQ_A", factors, decision="2024-01-02", evaluation="2024-07-31"
     )
-    assert len(path) == 7
+    assert len(path) == 6
+    assert info["excluded_periods"] == 1
+    assert path.index[0] == pd.Timestamp("2024-02-29")
     train = data.returns("2024-01-02", "ME", 24)["PUB_EQ_A"].dropna()
     factor = factor_asof(factors, "2024-01-02").reindex(train.index).market
     # Independent single-factor covariance/variance formula.
