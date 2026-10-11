@@ -1,5 +1,9 @@
 # 基金研究工作台
 
+[冻结筛选研究 API](docs/SELECTION.md)提供原净值频率的风格样本外评估、保留缺失基金的
+持续性比较、已有优化器的名单配置，以及不修改账户的账本预演。
+合成示例：`python examples/selection_study.py NEW_OUTPUT`。
+
 [![CI](https://github.com/PureSaber/quant-fund/actions/workflows/tests.yml/badge.svg)](https://github.com/PureSaber/quant-fund/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
