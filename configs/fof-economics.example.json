@@ -1,0 +1,15 @@
+{
+  "strategy": "equal",
+  "start": "2024-01-02",
+  "end": "2024-05-31",
+  "fof_policy": {
+    "known_at": "2024-01-02",
+    "day_count": "ACT/365F",
+    "management_rate": 0.01,
+    "custody_rate": 0.002,
+    "cash_interest_rate": 0.015,
+    "performance_rate": 0.2,
+    "crystallization_dates": ["2024-05-31"],
+    "payment_frequency": "daily"
+  }
+}

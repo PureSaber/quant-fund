@@ -80,6 +80,8 @@ def export_run(result, dataset, source_directory, output):
         )
     }
     monitoring = monitor(result, dataset)
+    if result["ledger"].economics.policy.enabled:
+        tables["fof_economics"] = result["fof_economics"]
     tables.update(monitoring)
     (root / "platform-snapshot.json").write_text(
         json.dumps(
@@ -158,6 +160,11 @@ def export_run(result, dataset, source_directory, output):
             ("rebalance_review", "调仓差额复核清单（非下单指令）"),
             ("decisions", "决策记录"),
         ]
+        + (
+            [("fof_economics", "FOF自身费用、现金利息与高水位")]
+            if "fof_economics" in tables
+            else []
+        )
     )
     document = f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -300,6 +307,8 @@ def verify_run(directory):
     difference = nav.total_value - nav[
         ["cash", "frozen_cash", "receivables", "holdings_value"]
     ].sum(axis=1)
+    if "fof_fee_liability" in nav:
+        difference += nav.fof_fee_liability
     if difference.abs().max() > 1e-6:
         raise ValueError("资产分项不能与总资产对账")
     return {

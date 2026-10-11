@@ -39,3 +39,5 @@ jobs:
           python -m quant_fund.cli validate --dataset data/ci-demo
           python -m quant_fund.cli run --dataset data/ci-demo --strategy equal --start 2024-01-02 --end 2024-05-31 --out artifacts/ci-smoke
           python -m quant_fund.cli verify-run artifacts/ci-smoke
+          python -m quant_fund.cli run --dataset data/ci-demo --config configs/fof-economics.example.json --out artifacts/ci-fof
+          python -m quant_fund.cli verify-run artifacts/ci-fof

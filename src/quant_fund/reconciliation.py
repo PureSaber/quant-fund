@@ -16,6 +16,10 @@ NUMERIC_COLUMNS = {
         "total_value",
         "nav",
         "pending_orders",
+        "gross_assets",
+        "fof_fee_liability",
+        "available_cash",
+        "high_water_mark",
     },
     "orders": {"order_id", "amount", "shares"},
     "trades": {
@@ -29,6 +33,22 @@ NUMERIC_COLUMNS = {
     },
     "lots": {"shares", "reserved", "lock_days"},
     "order_lots": {"order_id", "shares", "lot_lock_days"},
+    "fof_economics": {
+        "elapsed_calendar_days",
+        "previous_net_assets",
+        "interest_cash_basis",
+        "management_accrual",
+        "custody_accrual",
+        "cash_interest",
+        "performance_reserve_change",
+        "performance_crystallized",
+        "cash_paid",
+        "fixed_payable",
+        "performance_reserve",
+        "fee_liability",
+        "high_water_mark",
+        "net_assets",
+    },
 }
 
 
@@ -78,7 +98,7 @@ def verify_ledger_replay(root, dataset, config):
     config = BacktestConfig(**config)
     dates = validate_backtest_inputs(dataset, config)
     orders = read_table(root / "orders.csv")
-    ledger = Ledger(dataset, config.initial_cash)
+    ledger = Ledger(dataset, config.initial_cash, fof_policy=config.fof_policy)
     submitted = set()
     for date in dates:
         ledger.advance(date)
@@ -103,6 +123,8 @@ def verify_ledger_replay(root, dataset, config):
         "lots": ledger.lots_frame(),
         "order_lots": ledger.order_lots_frame(),
     }
+    if ledger.economics.policy.enabled:
+        tables["fof_economics"] = ledger.economics.frame()
     for name, table in tables.items():
         _compare(root, name, table)
     return {"verified_ledger_days": len(dates), "verified_ledger_orders": len(ledger.orders)}

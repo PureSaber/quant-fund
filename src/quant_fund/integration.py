@@ -42,6 +42,8 @@ def platform_snapshot(result, dataset, monitoring=None):
         "liquidity": records(monitoring["liquidity"]),
         "rebalance_review": records(monitoring["rebalance_review"]),
     }
+    if ledger.economics.policy.enabled:
+        snapshot["fof_economics"] = records(ledger.economics.frame())
     if dataset.disclosures is not None:
         from quant_data_kit.financial.holdings import exposure_summary, look_through
 
